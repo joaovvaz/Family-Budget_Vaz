@@ -114,6 +114,7 @@
       <div class="field-row">
         <div class="field"><label>Month</label><input type="month" id="budgetMonth"></div>
       </div>
+      <div class="cards" id="budgetMonthSummary" style="margin-bottom:14px"></div>
       <table>
         <thead><tr><th>Income?</th><th>Category</th><th class="num">Budgeted</th><th class="num">Actual</th><th class="num">Remaining</th><th>Usage</th><th></th></tr></thead>
         <tbody id="budgetMonthRows"></tbody>
@@ -438,16 +439,17 @@ function categoryOptionsHtml(selectedId) {
 
 function computeDashboard() {
   const ym = state.dashboardMonth;
-  let incomeActual = 0, budgetedExpense = 0, spentExpense = 0;
+  const mIdx = monthIdxFromYm(ym);
+  let incomeActual = 0, budgetedIncome = 0, budgetedExpense = 0, spentExpense = 0;
   state.categories.forEach(c => {
-    if (c.isIncome) incomeActual += categoryActualForMonth(c.id, ym, true);
-    else { budgetedExpense += Number(c.monthly[monthIdxFromYm(ym)])||0; spentExpense += categorySpentForMonth(c.id, ym); }
+    if (c.isIncome) { incomeActual += categoryActualForMonth(c.id, ym, true); budgetedIncome += Number(c.monthly[mIdx])||0; }
+    else { budgetedExpense += Number(c.monthly[mIdx])||0; spentExpense += categorySpentForMonth(c.id, ym); }
   });
   const checkingWithBal = sortedWithBalance(state.checkingStart, state.checkingEntries);
   const ccWithBal = sortedWithBalance(state.ccStart, state.ccEntries);
   const checkingBalance = checkingWithBal.length ? checkingWithBal[checkingWithBal.length-1].balance : state.checkingStart;
   const ccBalance = ccWithBal.length ? ccWithBal[ccWithBal.length-1].balance : state.ccStart;
-  return {incomeActual, budgetedExpense, spentExpense, remaining: incomeActual - spentExpense, checkingBalance, ccBalance};
+  return {incomeActual, budgetedIncome, budgetedExpense, spentExpense, remaining: budgetedExpense - spentExpense, checkingBalance, ccBalance};
 }
 function monthIdxFromYm(ym) { return parseInt((ym||currentMonthStr()).slice(5,7),10) - 1; }
 
@@ -483,6 +485,17 @@ function renderBudgetTab() {
 function renderBudgetMonth() {
   const ym = state.budgetMonth;
   const mIdx = monthIdxFromYm(ym);
+  let budgetedIncome = 0, budgetedExpense = 0;
+  state.categories.forEach(c => {
+    const v = Number(c.monthly[mIdx]) || 0;
+    if (c.isIncome) budgetedIncome += v; else budgetedExpense += v;
+  });
+  const balance = budgetedIncome - budgetedExpense;
+  document.getElementById('budgetMonthSummary').innerHTML = `
+    <div class="card good"><div class="label">Budgeted income</div><div class="value num">${money(budgetedIncome)}</div></div>
+    <div class="card"><div class="label">Budgeted expenses</div><div class="value num">${money(budgetedExpense)}</div></div>
+    <div class="card ${balance<0?'bad':'good'}"><div class="label">Balance</div><div class="value num">${money(balance)}</div></div>
+  `;
   document.getElementById('budgetMonthRows').innerHTML = state.categories.map(cat => {
     const budgeted = Number(cat.monthly[mIdx]) || 0;
     const actual = categoryActualForMonth(cat.id, ym, cat.isIncome);
@@ -623,4 +636,3 @@ function commit() { persist(); render(); }
 </script>
 </body>
 </html>
-
