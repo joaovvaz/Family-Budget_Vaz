@@ -249,13 +249,15 @@ async function loadFromCloud() {
   try {
     setStatus('Loading…', false);
     const res = await fetch(url + '?token=' + encodeURIComponent(getApiToken()));
-    if (!res.ok) throw new Error('status ' + res.status);
     const text = await res.text();
+    if (text.trim() === 'Forbidden') { setStatus('Token does not match the script — check Settings', false); return null; }
+    if (text.trim().startsWith('<')) { setStatus('Got a login/error page instead of data — check deployment access is set to "Anyone"', false); return null; }
+    if (!res.ok) { setStatus('Server error (status ' + res.status + ')', false); return null; }
     const data = JSON.parse(text);
     setStatus('Connected — synced', true);
     return data;
   } catch (e) {
-    setStatus('Could not reach shared sheet — showing last saved copy', false);
+    setStatus('Network error reaching the sheet — check the URL in Settings', false);
     return null;
   }
 }
@@ -269,6 +271,8 @@ async function saveToCloud() {
       headers: {'Content-Type': 'text/plain;charset=utf-8'},
       body: JSON.stringify(state)
     });
+    const text = await res.text();
+    if (text.trim() === 'Forbidden') { setStatus('Token does not match the script — check Settings', false); return; }
     if (!res.ok) throw new Error('status ' + res.status);
     setStatus('Connected — saved', true);
   } catch (e) {
@@ -619,3 +623,4 @@ function commit() { persist(); render(); }
 </script>
 </body>
 </html>
+
