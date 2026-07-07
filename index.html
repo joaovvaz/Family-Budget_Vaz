@@ -53,8 +53,20 @@
   .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
   .banner { font-size: 13px; padding: 10px 14px; border-radius: 10px; margin-bottom: 16px; }
   .banner.info { background: var(--teal-bg); color: #1B4A41; } .banner.warn { background: var(--amber-bg); color: #7A4A18; }
-  .cell-input { width: 100%; border: 1px solid transparent; background: transparent; font-family: inherit; font-size: 13px; padding: 4px 5px; border-radius: 6px; color: var(--ink); }
+  .cell-input { width: 100%; border: 1px solid transparent; background: transparent; font-family: inherit; font-size: 13px; padding: 4px 5px; border-radius: 6px; color: var(--ink); text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
   .cell-input:hover, .cell-input:focus { border-color: var(--line); background: #fff; }
+  .entryVendor:focus, .entryCategory:focus, .catName:focus {
+    position: relative; z-index: 20; width: max-content; min-width: 100%; max-width: 340px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.18); white-space: normal; overflow: visible;
+  }
+  .register-table { table-layout: fixed; }
+  .register-table td { max-width: 0; overflow: hidden; }
+  .register-table th:nth-child(1), .register-table td:nth-child(1) { width: 11%; }
+  .register-table th:nth-child(2), .register-table td:nth-child(2) { width: 31%; }
+  .register-table th:nth-child(3), .register-table td:nth-child(3) { width: 20%; }
+  .register-table th:nth-child(4), .register-table td:nth-child(4) { width: 15%; }
+  .register-table th:nth-child(5), .register-table td:nth-child(5) { width: 15%; }
+  .register-table th:nth-child(6), .register-table td:nth-child(6) { width: 8%; }
   .cell-input.num { text-align: right; }
   .month-table th, .month-table td { padding: 6px; font-size: 12px; }
   .month-table input { width: 72px; }
@@ -64,6 +76,8 @@
   .checkbox-cell { text-align: center; }
   .yeartotal { font-weight: 600; background: #F5F6F2; }
   .netrow td { font-weight: 600; background: #EEF0EA; }
+  .fillRight { font-size: 9px; color: var(--muted); cursor: pointer; text-align: center; margin-top: 1px; opacity: 0.55; text-transform: none; font-weight: 400; }
+  .fillRight:hover { opacity: 1; color: var(--teal); text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -141,11 +155,13 @@
       <div class="field"><label>Starting balance</label><input type="number" id="checkingStart" step="0.01"></div>
       <div class="field"><label>Filter from</label><input type="date" id="checkingFilterStart"></div>
       <div class="field"><label>Filter to</label><input type="date" id="checkingFilterEnd"></div>
+      <div class="field"><label>Category</label><select id="checkingFilterCat"><option value="">All</option></select></div>
+      <div class="field"><label>Description</label><input type="text" id="checkingFilterText" placeholder="e.g. Uber"></div>
       <button id="importCheckingBtn">Import bank CSV</button>
       <input type="file" id="checkingCsvInput" accept=".csv">
       <div class="hint" style="align-self:center">Expenses: negative. Deposits/income: positive.</div>
     </div>
-    <table>
+    <table class="register-table">
       <thead><tr><th>Date</th><th>Description</th><th>Category</th><th class="num">Amount</th><th class="num">Balance</th><th></th></tr></thead>
       <tbody id="checkingRows"></tbody>
     </table>
@@ -157,11 +173,13 @@
       <div class="field"><label>Starting balance owed</label><input type="number" id="ccStart" step="0.01"></div>
       <div class="field"><label>Filter from</label><input type="date" id="ccFilterStart"></div>
       <div class="field"><label>Filter to</label><input type="date" id="ccFilterEnd"></div>
+      <div class="field"><label>Category</label><select id="ccFilterCat"><option value="">All</option></select></div>
+      <div class="field"><label>Description</label><input type="text" id="ccFilterText" placeholder="e.g. Uber"></div>
       <button id="importCcBtn">Import bank CSV</button>
       <input type="file" id="ccCsvInput" accept=".csv">
       <div class="hint" style="align-self:center">Charges: positive. Payments you make: negative.</div>
     </div>
-    <table>
+    <table class="register-table">
       <thead><tr><th>Date</th><th>Description</th><th>Category</th><th class="num">Amount</th><th class="num">Balance</th><th></th></tr></thead>
       <tbody id="ccRows"></tbody>
     </table>
@@ -198,8 +216,8 @@ function defaultState() {
     ccEntries: [],
     dashboardMonth: currentMonthStr(),
     budgetMonth: currentMonthStr(),
-    checkingFilter: {start: '', end: ''},
-    ccFilter: {start: '', end: ''}
+    checkingFilter: {start: '', end: '', categoryId: '', text: ''},
+    ccFilter: {start: '', end: '', categoryId: '', text: ''}
   };
 }
 
@@ -222,8 +240,8 @@ function migrate(raw) {
   }));
   s.checkingEntries = fixEntries(raw.checkingEntries);
   s.ccEntries = fixEntries(raw.ccEntries);
-  s.checkingFilter = raw.checkingFilter || {start:'', end:''};
-  s.ccFilter = raw.ccFilter || {start:'', end:''};
+  s.checkingFilter = Object.assign({start:'', end:'', categoryId:'', text:''}, raw.checkingFilter || {});
+  s.ccFilter = Object.assign({start:'', end:'', categoryId:'', text:''}, raw.ccFilter || {});
   s.dashboardMonth = raw.dashboardMonth || (raw.periodStart ? raw.periodStart.slice(0,7) : currentMonthStr());
   s.budgetMonth = raw.budgetMonth || s.dashboardMonth;
   s.checkingStart = Number(raw.checkingStart)||0;
@@ -333,8 +351,12 @@ document.getElementById('checkingStart').addEventListener('change', e => { state
 document.getElementById('ccStart').addEventListener('change', e => { state.ccStart = parseFloat(e.target.value) || 0; commit(); });
 document.getElementById('checkingFilterStart').addEventListener('change', e => { state.checkingFilter.start = e.target.value; commit(); });
 document.getElementById('checkingFilterEnd').addEventListener('change', e => { state.checkingFilter.end = e.target.value; commit(); });
+document.getElementById('checkingFilterCat').addEventListener('change', e => { state.checkingFilter.categoryId = e.target.value; commit(); });
+document.getElementById('checkingFilterText').addEventListener('input', e => { state.checkingFilter.text = e.target.value; renderRegister('checking'); });
 document.getElementById('ccFilterStart').addEventListener('change', e => { state.ccFilter.start = e.target.value; commit(); });
 document.getElementById('ccFilterEnd').addEventListener('change', e => { state.ccFilter.end = e.target.value; commit(); });
+document.getElementById('ccFilterCat').addEventListener('change', e => { state.ccFilter.categoryId = e.target.value; commit(); });
+document.getElementById('ccFilterText').addEventListener('input', e => { state.ccFilter.text = e.target.value; renderRegister('cc'); });
 
 document.getElementById('addCatBtn').addEventListener('click', () => {
   const nameInput = document.getElementById('newCatName');
@@ -436,6 +458,12 @@ function sortedWithBalance(start, entries) {
 function categoryOptionsHtml(selectedId) {
   return '<option value="">Uncategorized</option>' + state.categories.map(c => `<option value="${c.id}" ${c.id===selectedId?'selected':''}>${escapeHtml(c.name)}</option>`).join('');
 }
+function filterCategoryOptionsHtml(selectedId) {
+  const sel = selectedId || '';
+  return `<option value="" ${sel===''?'selected':''}>All</option>` +
+    `<option value="__uncategorized__" ${sel==='__uncategorized__'?'selected':''}>Uncategorized</option>` +
+    state.categories.map(c => `<option value="${c.id}" ${c.id===sel?'selected':''}>${escapeHtml(c.name)}</option>`).join('');
+}
 
 function computeDashboard() {
   const ym = state.dashboardMonth;
@@ -460,8 +488,12 @@ function render() {
   document.getElementById('ccStart').value = state.ccStart || '';
   document.getElementById('checkingFilterStart').value = state.checkingFilter.start || '';
   document.getElementById('checkingFilterEnd').value = state.checkingFilter.end || '';
+  document.getElementById('checkingFilterCat').innerHTML = filterCategoryOptionsHtml(state.checkingFilter.categoryId);
+  document.getElementById('checkingFilterText').value = state.checkingFilter.text || '';
   document.getElementById('ccFilterStart').value = state.ccFilter.start || '';
   document.getElementById('ccFilterEnd').value = state.ccFilter.end || '';
+  document.getElementById('ccFilterCat').innerHTML = filterCategoryOptionsHtml(state.ccFilter.categoryId);
+  document.getElementById('ccFilterText').value = state.ccFilter.text || '';
 
   const d = computeDashboard();
   document.getElementById('dashCards').innerHTML = `
@@ -517,9 +549,14 @@ function renderBudgetMonth() {
 
 function renderBudgetYear() {
   const head = document.getElementById('budgetYearHead');
-  head.innerHTML = '<th>Income?</th><th>Category</th>' + MONTH_NAMES.map(m => `<th class="num">${m}</th>`).join('') + '<th class="num">Balance (year)</th><th></th>';
+  head.innerHTML = '<th>Income?</th><th>Category</th>' +
+    MONTH_NAMES.map((m, i) => `<th class="num">${m}${i < 11 ? `<div class="fillRight" data-allrows="1" data-m="${i}" title="Copy every category's ${m} amount to ${MONTH_NAMES[i+1]}–Dec">→ all rest</div>` : ''}</th>`).join('') +
+    '<th class="num">Balance (year)</th><th></th>';
   document.getElementById('budgetYearRows').innerHTML = state.categories.map(cat => {
-    const monthCells = cat.monthly.map((v, i) => `<td class="num"><input type="number" step="0.01" class="cell-input num catMonthBudget" data-id="${cat.id}" data-m="${i}" value="${v||''}"></td>`).join('');
+    const monthCells = cat.monthly.map((v, i) => `<td class="num">
+        <input type="number" step="0.01" class="cell-input num catMonthBudget" data-id="${cat.id}" data-m="${i}" value="${v||''}">
+        ${i < 11 ? `<div class="fillRight" data-id="${cat.id}" data-m="${i}" title="Copy this amount to ${MONTH_NAMES[i+1]}–Dec">→ rest</div>` : ''}
+      </td>`).join('');
     return `<tr>
       <td class="checkbox-cell"><input type="checkbox" class="catIncome" data-id="${cat.id}" ${cat.isIncome?'checked':''}></td>
       <td><input type="text" class="cell-input catName" data-id="${cat.id}" value="${escapeHtml(cat.name)}" style="min-width:110px"></td>
@@ -531,6 +568,26 @@ function renderBudgetYear() {
   const netByMonth = MONTH_NAMES.map((_, i) => state.categories.reduce((s,c) => s + (c.isIncome ? 1 : -1) * (Number(c.monthly[i])||0), 0));
   const netYear = netByMonth.reduce((s,v) => s+v, 0);
   document.getElementById('budgetYearNet').innerHTML = `<td></td><td>Net balance</td>` + netByMonth.map(v => `<td class="num ${v<0?'neg':'pos'}">${money(v)}</td>`).join('') + `<td class="num ${netYear<0?'neg':'pos'}">${money(netYear)}</td><td></td>`;
+  document.querySelectorAll('.fillRight[data-allrows]').forEach(btn => {
+    btn.addEventListener('click', e => {
+      const m = parseInt(e.target.dataset.m, 10);
+      state.categories.forEach(cat => {
+        const val = Number(cat.monthly[m]) || 0;
+        for (let j = m + 1; j < 12; j++) cat.monthly[j] = val;
+      });
+      commit();
+    });
+  });
+  document.querySelectorAll('.fillRight:not([data-allrows])').forEach(btn => {
+    btn.addEventListener('click', e => {
+      const cat = state.categories.find(c => c.id === e.target.dataset.id);
+      const m = parseInt(e.target.dataset.m, 10);
+      if (!cat) return;
+      const val = Number(cat.monthly[m]) || 0;
+      for (let j = m + 1; j < 12; j++) cat.monthly[j] = val;
+      commit();
+    });
+  });
   wireBudgetRowEvents();
 }
 
@@ -573,16 +630,27 @@ function renderRegister(kind) {
   const entries = isChecking ? state.checkingEntries : state.ccEntries;
   const filter = isChecking ? state.checkingFilter : state.ccFilter;
   const withBal = sortedWithBalance(start, entries);
-  const filtered = withBal.filter(e => (!filter.start || e.date >= filter.start) && (!filter.end || e.date <= filter.end));
+  const searchText = (filter.text || '').trim().toLowerCase();
+  const filtered = withBal.filter(e => {
+    if (filter.start && e.date < filter.start) return false;
+    if (filter.end && e.date > filter.end) return false;
+    if (filter.categoryId === '__uncategorized__' && e.categoryId) return false;
+    if (filter.categoryId && filter.categoryId !== '__uncategorized__' && e.categoryId !== filter.categoryId) return false;
+    if (searchText && !(e.vendor || '').toLowerCase().includes(searchText)) return false;
+    return true;
+  });
   const tbody = document.getElementById(isChecking ? 'checkingRows' : 'ccRows');
-  tbody.innerHTML = filtered.map(e => `<tr data-list="${isChecking?'checkingEntries':'ccEntries'}" data-id="${e.id}">
+  tbody.innerHTML = filtered.map(e => {
+    const cat = state.categories.find(c => c.id === e.categoryId);
+    return `<tr data-list="${isChecking?'checkingEntries':'ccEntries'}" data-id="${e.id}">
       <td><input type="date" class="cell-input entryDate" value="${e.date}"></td>
-      <td><input type="text" class="cell-input entryVendor" value="${escapeHtml(e.vendor)}"></td>
-      <td><select class="cell-input entryCategory">${categoryOptionsHtml(e.categoryId)}</select></td>
+      <td><input type="text" class="cell-input entryVendor" value="${escapeHtml(e.vendor)}" title="${escapeHtml(e.vendor)}"></td>
+      <td><select class="cell-input entryCategory" title="${escapeHtml(cat?cat.name:'Uncategorized')}">${categoryOptionsHtml(e.categoryId)}</select></td>
       <td class="num"><input type="number" step="0.01" class="cell-input num entryAmount ${e.amount<0?'neg':'pos'}" value="${e.amount}"></td>
       <td class="num">${money(e.balance)}</td>
       <td><button class="ghost delEntry">&times;</button></td>
-    </tr>`).join('') || `<tr><td colspan="6" style="text-align:center;color:var(--muted)">No transactions in range.</td></tr>`;
+    </tr>`;
+  }).join('') || `<tr><td colspan="6" style="text-align:center;color:var(--muted)">No transactions match.</td></tr>`;
 
   tbody.querySelectorAll('tr[data-id]').forEach(tr => {
     const list = tr.dataset.list, id = tr.dataset.id;
