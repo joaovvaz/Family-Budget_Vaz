@@ -68,6 +68,11 @@
   .register-table th:nth-child(5), .register-table td:nth-child(5) { width: 100px; }
   .register-table th:nth-child(6), .register-table td:nth-child(6) { width: 40px; }
   .register-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: 12px; }
+  .modal-overlay { position: fixed; inset: 0; background: rgba(20,30,28,0.45); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
+  .modal-box { background: #fff; border-radius: 14px; padding: 20px; width: 100%; max-width: 380px; box-shadow: 0 10px 40px rgba(0,0,0,0.25); }
+  .modal-box .field { display: flex; flex-direction: column; gap: 4px; }
+  .modal-box .field label { font-size: 12px; color: var(--muted); }
+  .modal-box .field input, .modal-box .field select { font-family: inherit; font-size: 14px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; width: 100%; }
   .cell-input.num { text-align: right; }
   .month-table th, .month-table td { padding: 6px; font-size: 12px; }
   .month-table input { width: 72px; }
@@ -161,6 +166,7 @@
       <button id="importCheckingBtn">Import bank CSV</button>
       <input type="file" id="checkingCsvInput" accept=".csv">
       <div class="hint" style="align-self:center">Expenses: negative. Deposits/income: positive.</div>
+      <button class="primary" id="addCheckingBtn" style="margin-left:auto">+ Add transaction</button>
     </div>
     <div class="register-scroll">
     <table class="register-table">
@@ -168,7 +174,6 @@
       <tbody id="checkingRows"></tbody>
     </table>
     </div>
-    <div class="addrow" id="checkingAddRow"></div>
   </div>
 
   <div class="panel" id="panel-creditcard">
@@ -181,6 +186,7 @@
       <button id="importCcBtn">Import bank CSV</button>
       <input type="file" id="ccCsvInput" accept=".csv">
       <div class="hint" style="align-self:center">Charges: positive. Payments you make: negative.</div>
+      <button class="primary" id="addCcBtn" style="margin-left:auto">+ Add transaction</button>
     </div>
     <div class="register-scroll">
     <table class="register-table">
@@ -188,7 +194,20 @@
       <tbody id="ccRows"></tbody>
     </table>
     </div>
-    <div class="addrow" id="ccAddRow"></div>
+  </div>
+
+  <div class="modal-overlay" id="txnModalOverlay" style="display:none">
+    <div class="modal-box">
+      <h3 id="txnModalTitle" style="margin:0 0 14px;font-family:Georgia,serif">Add transaction</h3>
+      <div class="field" style="margin-bottom:10px"><label>Date</label><input type="date" id="modalDate"></div>
+      <div class="field" style="margin-bottom:10px"><label>Description</label><input type="text" id="modalDesc" placeholder="Description"></div>
+      <div class="field" style="margin-bottom:10px"><label>Category</label><select id="modalCat"></select></div>
+      <div class="field" style="margin-bottom:14px"><label>Amount</label><input type="text" inputmode="decimal" id="modalAmt" placeholder="Amount"></div>
+      <div style="display:flex; gap:8px; justify-content:flex-end">
+        <button id="modalCancelBtn">Cancel</button>
+        <button class="primary" id="modalAddBtn">Add</button>
+      </div>
+    </div>
   </div>
 
 </div>
@@ -661,8 +680,9 @@ function renderRegister(kind) {
     if (searchText && !(e.vendor || '').toLowerCase().includes(searchText)) return false;
     return true;
   });
+  const displayList = filtered.slice().reverse();
   const tbody = document.getElementById(isChecking ? 'checkingRows' : 'ccRows');
-  tbody.innerHTML = filtered.map(e => {
+  tbody.innerHTML = displayList.map(e => {
     const cat = state.categories.find(c => c.id === e.categoryId);
     return `<tr data-list="${isChecking?'checkingEntries':'ccEntries'}" data-id="${e.id}">
       <td><input type="date" class="cell-input entryDate" value="${e.date}"></td>
@@ -685,31 +705,36 @@ function renderRegister(kind) {
     amtInput.addEventListener('blur', e => { entry.amount = parseAmt(e.target.value); commit(); });
     tr.querySelector('.delEntry').addEventListener('click', () => { state[list] = state[list].filter(x => x.id !== id); commit(); });
   });
-
-  document.getElementById(isChecking ? 'checkingAddRow' : 'ccAddRow').innerHTML = addRowHtml(isChecking ? 'checking' : 'cc');
-  const addBtn = document.getElementById('add' + (isChecking ? 'Checking' : 'Cc'));
-  if (addBtn) addBtn.addEventListener('click', () => addEntry(isChecking ? 'checking' : 'cc'));
 }
 
-function addRowHtml(kind) {
-  return `
-    <input type="date" id="${kind}Date" value="${todayStr()}">
-    <input type="text" id="${kind}Vendor" placeholder="Description">
-    <select id="${kind}Cat">${categoryOptionsHtml()}</select>
-    <input type="number" step="0.01" id="${kind}Amt" placeholder="Amount" style="width:110px">
-    <button class="primary" id="add${kind==='checking'?'Checking':'Cc'}">Add</button>
-  `;
+let modalKind = null;
+function openTxnModal(kind) {
+  modalKind = kind;
+  document.getElementById('txnModalTitle').textContent = 'Add ' + (kind === 'checking' ? 'checking' : 'credit card') + ' transaction';
+  document.getElementById('modalDate').value = todayStr();
+  document.getElementById('modalDesc').value = '';
+  document.getElementById('modalCat').innerHTML = categoryOptionsHtml();
+  document.getElementById('modalAmt').value = '';
+  document.getElementById('txnModalOverlay').style.display = 'flex';
+  document.getElementById('modalDesc').focus();
 }
-function addEntry(kind) {
-  const date = document.getElementById(kind+'Date').value || todayStr();
-  const vendor = document.getElementById(kind+'Vendor').value.trim();
-  const categoryId = document.getElementById(kind+'Cat').value;
-  const amount = parseFloat(document.getElementById(kind+'Amt').value);
-  if (!amount) return;
+function closeTxnModal() { document.getElementById('txnModalOverlay').style.display = 'none'; modalKind = null; }
+document.getElementById('modalCancelBtn').addEventListener('click', closeTxnModal);
+document.getElementById('txnModalOverlay').addEventListener('click', e => { if (e.target.id === 'txnModalOverlay') closeTxnModal(); });
+document.getElementById('modalAddBtn').addEventListener('click', () => {
+  if (!modalKind) return;
+  const date = document.getElementById('modalDate').value || todayStr();
+  const vendor = document.getElementById('modalDesc').value.trim();
+  const categoryId = document.getElementById('modalCat').value;
+  const amount = parseAmt(document.getElementById('modalAmt').value);
+  if (!amount) { document.getElementById('modalAmt').focus(); return; }
   const entry = {id: uid(), date, vendor, categoryId, amount};
-  if (kind === 'checking') state.checkingEntries.push(entry); else state.ccEntries.push(entry);
+  if (modalKind === 'checking') state.checkingEntries.push(entry); else state.ccEntries.push(entry);
   commit();
-}
+  closeTxnModal();
+});
+document.getElementById('addCheckingBtn').addEventListener('click', () => openTxnModal('checking'));
+document.getElementById('addCcBtn').addEventListener('click', () => openTxnModal('cc'));
 
 function commit() { persist(); render(); }
 
