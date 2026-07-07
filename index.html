@@ -59,14 +59,15 @@
     position: relative; z-index: 20; width: max-content; min-width: 100%; max-width: 340px;
     box-shadow: 0 2px 10px rgba(0,0,0,0.18); white-space: normal; overflow: visible;
   }
-  .register-table { table-layout: fixed; }
+  .register-table { table-layout: fixed; min-width: 620px; }
   .register-table td { max-width: 0; overflow: hidden; }
-  .register-table th:nth-child(1), .register-table td:nth-child(1) { width: 11%; }
-  .register-table th:nth-child(2), .register-table td:nth-child(2) { width: 31%; }
-  .register-table th:nth-child(3), .register-table td:nth-child(3) { width: 20%; }
-  .register-table th:nth-child(4), .register-table td:nth-child(4) { width: 15%; }
-  .register-table th:nth-child(5), .register-table td:nth-child(5) { width: 15%; }
-  .register-table th:nth-child(6), .register-table td:nth-child(6) { width: 8%; }
+  .register-table th:nth-child(1), .register-table td:nth-child(1) { width: 90px; }
+  .register-table th:nth-child(2), .register-table td:nth-child(2) { width: 190px; }
+  .register-table th:nth-child(3), .register-table td:nth-child(3) { width: 130px; }
+  .register-table th:nth-child(4), .register-table td:nth-child(4) { width: 100px; }
+  .register-table th:nth-child(5), .register-table td:nth-child(5) { width: 100px; }
+  .register-table th:nth-child(6), .register-table td:nth-child(6) { width: 40px; }
+  .register-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: 12px; }
   .cell-input.num { text-align: right; }
   .month-table th, .month-table td { padding: 6px; font-size: 12px; }
   .month-table input { width: 72px; }
@@ -161,10 +162,12 @@
       <input type="file" id="checkingCsvInput" accept=".csv">
       <div class="hint" style="align-self:center">Expenses: negative. Deposits/income: positive.</div>
     </div>
+    <div class="register-scroll">
     <table class="register-table">
       <thead><tr><th>Date</th><th>Description</th><th>Category</th><th class="num">Amount</th><th class="num">Balance</th><th></th></tr></thead>
       <tbody id="checkingRows"></tbody>
     </table>
+    </div>
     <div class="addrow" id="checkingAddRow"></div>
   </div>
 
@@ -179,10 +182,12 @@
       <input type="file" id="ccCsvInput" accept=".csv">
       <div class="hint" style="align-self:center">Charges: positive. Payments you make: negative.</div>
     </div>
+    <div class="register-scroll">
     <table class="register-table">
       <thead><tr><th>Date</th><th>Description</th><th>Category</th><th class="num">Amount</th><th class="num">Balance</th><th></th></tr></thead>
       <tbody id="ccRows"></tbody>
     </table>
+    </div>
     <div class="addrow" id="ccAddRow"></div>
   </div>
 
@@ -192,6 +197,17 @@
 const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 function uid() { return Math.random().toString(36).slice(2, 9); }
 function money(n) { n = Number(n) || 0; return n.toLocaleString('en-CA', {style:'currency', currency:'CAD'}); }
+function fmtAmt(n) {
+  n = Number(n) || 0;
+  const sign = n < 0 ? '-' : '';
+  return sign + '$' + Math.abs(n).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+function parseAmt(str) {
+  if (typeof str !== 'string') return Number(str) || 0;
+  const cleaned = str.replace(/[^0-9.\-]/g, '');
+  const n = parseFloat(cleaned);
+  return isNaN(n) ? 0 : n;
+}
 function todayStr() { return new Date().toISOString().slice(0,10); }
 function currentMonthStr() { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0'); }
 function monthKey(dateStr) { return (dateStr||'').slice(0,7); }
@@ -537,7 +553,7 @@ function renderBudgetMonth() {
     return `<tr>
       <td class="checkbox-cell"><input type="checkbox" class="catIncome" data-id="${cat.id}" ${cat.isIncome?'checked':''}></td>
       <td><input type="text" class="cell-input catName" data-id="${cat.id}" value="${escapeHtml(cat.name)}"></td>
-      <td class="num"><input type="number" step="0.01" class="cell-input num catMonthBudget" data-id="${cat.id}" data-m="${mIdx}" value="${budgeted||''}"></td>
+      <td class="num"><input type="text" inputmode="decimal" class="cell-input num catMonthBudget" data-id="${cat.id}" data-m="${mIdx}" value="${budgeted ? fmtAmt(budgeted) : ''}"></td>
       <td class="num">${money(actual)}</td>
       <td class="num ${remaining<0 && !cat.isIncome?'neg':''}">${money(remaining)}</td>
       <td style="min-width:90px"><div class="bar-bg"><div class="bar-fill ${over?'over':''}" style="width:${pct}%"></div></div></td>
@@ -554,7 +570,7 @@ function renderBudgetYear() {
     '<th class="num">Balance (year)</th><th></th>';
   document.getElementById('budgetYearRows').innerHTML = state.categories.map(cat => {
     const monthCells = cat.monthly.map((v, i) => `<td class="num">
-        <input type="number" step="0.01" class="cell-input num catMonthBudget" data-id="${cat.id}" data-m="${i}" value="${v||''}">
+        <input type="text" inputmode="decimal" class="cell-input num catMonthBudget" data-id="${cat.id}" data-m="${i}" value="${v ? fmtAmt(v) : ''}">
         ${i < 11 ? `<div class="fillRight" data-id="${cat.id}" data-m="${i}" title="Copy this amount to ${MONTH_NAMES[i+1]}–Dec">→ rest</div>` : ''}
       </td>`).join('');
     return `<tr>
@@ -593,9 +609,15 @@ function renderBudgetYear() {
 
 function wireBudgetRowEvents() {
   document.querySelectorAll('.catMonthBudget').forEach(inp => {
-    inp.addEventListener('change', e => {
+    inp.addEventListener('focus', e => {
       const cat = state.categories.find(c => c.id === e.target.dataset.id);
-      if (cat) cat.monthly[parseInt(e.target.dataset.m,10)] = parseFloat(e.target.value) || 0;
+      const v = cat ? Number(cat.monthly[parseInt(e.target.dataset.m,10)]) || 0 : 0;
+      e.target.value = v || '';
+    });
+    inp.addEventListener('blur', e => {
+      const cat = state.categories.find(c => c.id === e.target.dataset.id);
+      const val = parseAmt(e.target.value);
+      if (cat) cat.monthly[parseInt(e.target.dataset.m,10)] = val;
       commit();
     });
   });
@@ -646,7 +668,7 @@ function renderRegister(kind) {
       <td><input type="date" class="cell-input entryDate" value="${e.date}"></td>
       <td><input type="text" class="cell-input entryVendor" value="${escapeHtml(e.vendor)}" title="${escapeHtml(e.vendor)}"></td>
       <td><select class="cell-input entryCategory" title="${escapeHtml(cat?cat.name:'Uncategorized')}">${categoryOptionsHtml(e.categoryId)}</select></td>
-      <td class="num"><input type="number" step="0.01" class="cell-input num entryAmount ${e.amount<0?'neg':'pos'}" value="${e.amount}"></td>
+      <td class="num"><input type="text" inputmode="decimal" class="cell-input num entryAmount ${e.amount<0?'neg':'pos'}" value="${fmtAmt(e.amount)}"></td>
       <td class="num">${money(e.balance)}</td>
       <td><button class="ghost delEntry">&times;</button></td>
     </tr>`;
@@ -658,7 +680,9 @@ function renderRegister(kind) {
     tr.querySelector('.entryDate').addEventListener('change', e => { entry.date = e.target.value; commit(); });
     tr.querySelector('.entryVendor').addEventListener('change', e => { entry.vendor = e.target.value; commit(); });
     tr.querySelector('.entryCategory').addEventListener('change', e => { entry.categoryId = e.target.value; commit(); });
-    tr.querySelector('.entryAmount').addEventListener('change', e => { entry.amount = parseFloat(e.target.value) || 0; commit(); });
+    const amtInput = tr.querySelector('.entryAmount');
+    amtInput.addEventListener('focus', e => { e.target.value = entry.amount || ''; });
+    amtInput.addEventListener('blur', e => { entry.amount = parseAmt(e.target.value); commit(); });
     tr.querySelector('.delEntry').addEventListener('click', () => { state[list] = state[list].filter(x => x.id !== id); commit(); });
   });
 
