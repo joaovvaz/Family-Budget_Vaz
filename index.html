@@ -77,7 +77,14 @@
   @media print {
     body * { visibility: hidden; }
     .report-box, .report-box * { visibility: visible; }
-    .report-box { position: absolute; left: 0; top: 0; width: 100%; max-height: none; box-shadow: none; }
+    .modal-overlay { position: static !important; background: none !important; padding: 0 !important; display: block !important; inset: auto !important; }
+    .report-box {
+      position: static !important; left: auto; top: auto; width: 100%; max-width: 100%;
+      max-height: none !important; overflow: visible !important; box-shadow: none; padding: 0;
+    }
+    table { page-break-inside: auto; }
+    tr { page-break-inside: avoid; page-break-after: auto; }
+    .cards, .card { page-break-inside: avoid; }
     #reportPrintBtn, #reportCloseBtn { display: none; }
   }
   .cell-input.num { text-align: right; }
