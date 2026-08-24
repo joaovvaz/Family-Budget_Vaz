@@ -73,6 +73,13 @@
   .modal-box .field { display: flex; flex-direction: column; gap: 4px; }
   .modal-box .field label { font-size: 12px; color: var(--muted); }
   .modal-box .field input, .modal-box .field select { font-family: inherit; font-size: 14px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; width: 100%; }
+  .report-box { max-width: 720px; max-height: 88vh; overflow-y: auto; }
+  @media print {
+    body * { visibility: hidden; }
+    .report-box, .report-box * { visibility: visible; }
+    .report-box { position: absolute; left: 0; top: 0; width: 100%; max-height: none; box-shadow: none; }
+    #reportPrintBtn, #reportCloseBtn { display: none; }
+  }
   .cell-input.num { text-align: right; }
   .month-table th, .month-table td { padding: 6px; font-size: 12px; }
   .month-table input { width: 72px; }
@@ -135,7 +142,9 @@
     <div class="addrow" style="margin-top:0; margin-bottom:16px">
       <input type="text" id="newCatName" placeholder="New category name">
       <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:4px"><input type="checkbox" id="newCatIncome"> Income category</label>
+      <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:4px"><input type="checkbox" id="newCatFixed"> Fixed expense</label>
       <button id="addCatBtn">Add category</button>
+      <button id="reportBtn" class="primary" style="margin-left:auto">📊 Report</button>
     </div>
 
     <div id="budgetMonthView">
@@ -144,7 +153,7 @@
       </div>
       <div class="cards" id="budgetMonthSummary" style="margin-bottom:14px"></div>
       <table>
-        <thead><tr><th>Income?</th><th>Category</th><th class="num">Budgeted</th><th class="num">Actual</th><th class="num">Remaining</th><th>Usage</th><th></th></tr></thead>
+        <thead><tr><th>Income?</th><th>Fixed?</th><th>Category</th><th class="num">Budgeted</th><th class="num">Actual</th><th class="num">Remaining</th><th>Usage</th><th></th></tr></thead>
         <tbody id="budgetMonthRows"></tbody>
       </table>
     </div>
@@ -214,6 +223,19 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="reportModalOverlay" style="display:none">
+    <div class="modal-box report-box">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <h3 style="margin:0;font-family:Georgia,serif">Budget report</h3>
+        <div style="display:flex;gap:8px">
+          <button id="reportPrintBtn">Print / Save PDF</button>
+          <button id="reportCloseBtn">Close</button>
+        </div>
+      </div>
+      <div id="reportContent"></div>
+    </div>
+  </div>
+
 </div>
 
 <script>
@@ -241,13 +263,13 @@ function newMonthlyArray() { return new Array(12).fill(0); }
 function defaultState() {
   return {
     categories: [
-      {id: uid(), name: "Income", isIncome: true, monthly: newMonthlyArray()},
-      {id: uid(), name: "Housing", isIncome: false, monthly: newMonthlyArray()},
-      {id: uid(), name: "Groceries", isIncome: false, monthly: newMonthlyArray()},
-      {id: uid(), name: "Childcare", isIncome: false, monthly: newMonthlyArray()},
-      {id: uid(), name: "Transportation", isIncome: false, monthly: newMonthlyArray()},
-      {id: uid(), name: "Utilities", isIncome: false, monthly: newMonthlyArray()},
-      {id: uid(), name: "Discretionary", isIncome: false, monthly: newMonthlyArray()}
+      {id: uid(), name: "Income", isIncome: true, isFixed: false, monthly: newMonthlyArray()},
+      {id: uid(), name: "Housing", isIncome: false, isFixed: false, monthly: newMonthlyArray()},
+      {id: uid(), name: "Groceries", isIncome: false, isFixed: false, monthly: newMonthlyArray()},
+      {id: uid(), name: "Childcare", isIncome: false, isFixed: false, monthly: newMonthlyArray()},
+      {id: uid(), name: "Transportation", isIncome: false, isFixed: false, monthly: newMonthlyArray()},
+      {id: uid(), name: "Utilities", isIncome: false, isFixed: false, monthly: newMonthlyArray()},
+      {id: uid(), name: "Discretionary", isIncome: false, isFixed: false, monthly: newMonthlyArray()}
     ],
     checkingStart: 0,
     checkingStartDate: todayStr(),
@@ -267,12 +289,12 @@ function migrate(raw) {
   if (!raw || typeof raw !== 'object') return d;
   const s = Object.assign({}, d, raw);
   s.categories = (raw.categories || d.categories).map(c => {
-    if (Array.isArray(c.monthly)) return {id: c.id||uid(), name: c.name||'Category', isIncome: !!c.isIncome, monthly: c.monthly.slice(0,12).concat(newMonthlyArray()).slice(0,12)};
+    if (Array.isArray(c.monthly)) return {id: c.id||uid(), name: c.name||'Category', isIncome: !!c.isIncome, isFixed: !!c.isFixed, monthly: c.monthly.slice(0,12).concat(newMonthlyArray()).slice(0,12)};
     const flat = typeof c.budgeted === 'number' ? c.budgeted : 0;
-    return {id: c.id||uid(), name: c.name||'Category', isIncome: !!c.isIncome, monthly: newMonthlyArray().map(()=>flat)};
+    return {id: c.id||uid(), name: c.name||'Category', isIncome: !!c.isIncome, isFixed: !!c.isFixed, monthly: newMonthlyArray().map(()=>flat)};
   });
   if (typeof raw.income === 'number' && raw.income > 0 && !s.categories.some(c=>c.isIncome)) {
-    s.categories.unshift({id: uid(), name: 'Income', isIncome: true, monthly: newMonthlyArray().map(()=>raw.income)});
+    s.categories.unshift({id: uid(), name: 'Income', isIncome: true, isFixed: false, monthly: newMonthlyArray().map(()=>raw.income)});
   }
   const fixEntries = (list) => (list||[]).map(e => ({
     id: e.id||uid(), date: e.date||todayStr(),
@@ -403,9 +425,10 @@ document.getElementById('ccFilterText').addEventListener('input', e => { state.c
 document.getElementById('addCatBtn').addEventListener('click', () => {
   const nameInput = document.getElementById('newCatName');
   const isIncomeInput = document.getElementById('newCatIncome');
+  const isFixedInput = document.getElementById('newCatFixed');
   const name = nameInput.value.trim(); if (!name) return;
-  state.categories.push({id: uid(), name, isIncome: isIncomeInput.checked, monthly: newMonthlyArray()});
-  nameInput.value = ''; isIncomeInput.checked = false;
+  state.categories.push({id: uid(), name, isIncome: isIncomeInput.checked, isFixed: isFixedInput.checked, monthly: newMonthlyArray()});
+  nameInput.value = ''; isIncomeInput.checked = false; isFixedInput.checked = false;
   commit();
 });
 
@@ -531,6 +554,179 @@ function computeDashboard() {
 }
 function monthIdxFromYm(ym) { return parseInt((ym||currentMonthStr()).slice(5,7),10) - 1; }
 
+function categoryVendorsForMonth(catId, yyyymm) {
+  const totals = {};
+  state.checkingEntries.forEach(e => {
+    if (e.categoryId === catId && monthKey(e.date) === yyyymm && e.amount < 0) {
+      const v = e.vendor || 'Unknown'; totals[v] = (totals[v]||0) + (-e.amount);
+    }
+  });
+  state.ccEntries.forEach(e => {
+    if (e.categoryId === catId && monthKey(e.date) === yyyymm && e.amount > 0) {
+      const v = e.vendor || 'Unknown'; totals[v] = (totals[v]||0) + e.amount;
+    }
+  });
+  return Object.entries(totals).sort((a,b) => b[1]-a[1]).slice(0, 4).map(([v,amt]) => `${v} (${money(amt)})`);
+}
+
+function monthLabel(ym) {
+  const [y, m] = (ym||currentMonthStr()).split('-');
+  return MONTH_NAMES[parseInt(m,10)-1] + ' ' + y;
+}
+
+function buildReport(ym) {
+  const mIdx = monthIdxFromYm(ym);
+  const expenseCats = state.categories.filter(c => !c.isIncome);
+  const fixedCats = expenseCats.filter(c => c.isFixed);
+  const variableCats = expenseCats.filter(c => !c.isFixed);
+
+  const rows = expenseCats.map(c => ({
+    cat: c,
+    budgeted: Number(c.monthly[mIdx]) || 0,
+    spent: categorySpentForMonth(c.id, ym)
+  }));
+  const totalBudgeted = rows.reduce((s,r) => s + r.budgeted, 0);
+  const totalSpent = rows.reduce((s,r) => s + r.spent, 0);
+  const totalRemaining = totalBudgeted - totalSpent;
+  const pctSpent = totalBudgeted > 0 ? (totalSpent / totalBudgeted * 100) : (totalSpent > 0 ? 100 : 0);
+
+  const isCurrentMonth = ym === currentMonthStr();
+  let spentToday = 0, latestTxnLabel = null;
+  if (isCurrentMonth) {
+    const today = todayStr();
+    const todaysTxns = [];
+    state.checkingEntries.forEach(e => { if (e.date === today && e.amount < 0) { spentToday += -e.amount; todaysTxns.push(e); } });
+    state.ccEntries.forEach(e => { if (e.date === today && e.amount > 0) { spentToday += e.amount; todaysTxns.push(e); } });
+    if (todaysTxns.length) {
+      const last = todaysTxns[todaysTxns.length - 1];
+      const cat = state.categories.find(c => c.id === last.categoryId);
+      latestTxnLabel = (cat ? cat.name : 'Uncategorized') + (last.vendor ? (' at ' + last.vendor) : '');
+    }
+  }
+
+  const variableRows = rows.filter(r => !r.cat.isFixed);
+  const fixedRows = rows.filter(r => r.cat.isFixed);
+  const overRows = variableRows.filter(r => r.spent > r.budgeted).sort((a,b) => (b.spent-b.budgeted) - (a.spent-a.budgeted));
+  const underRows = variableRows.filter(r => r.spent <= r.budgeted).sort((a,b) => (b.budgeted-b.spent) - (a.budgeted-a.spent));
+
+  return {ym, mIdx, totalBudgeted, totalSpent, totalRemaining, pctSpent, isCurrentMonth, spentToday, latestTxnLabel, overRows, underRows, fixedRows};
+}
+
+function donutSvg(pct, size) {
+  size = size || 140;
+  const r = size/2 - 10, c = 2*Math.PI*r, clamped = Math.max(0, Math.min(100, pct));
+  const dash = (clamped/100) * c;
+  const color = pct > 100 ? '#B5473D' : '#2F6F63';
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+    <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="#EEF0EA" stroke-width="14"/>
+    <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="${color}" stroke-width="14"
+      stroke-dasharray="${dash} ${c-dash}" stroke-linecap="round"
+      transform="rotate(-90 ${size/2} ${size/2})"/>
+    <text x="50%" y="47%" text-anchor="middle" font-size="22" font-weight="700" fill="#1E2A28" font-family="Georgia,serif">${Math.round(pct)}%</text>
+    <text x="50%" y="64%" text-anchor="middle" font-size="11" fill="#6B7570">of budget spent</text>
+  </svg>`;
+}
+
+function barCompareHtml(rows) {
+  const max = Math.max(1, ...rows.map(r => Math.max(r.budgeted, r.spent)));
+  return rows.map(r => {
+    const over = r.spent > r.budgeted;
+    const budgetPct = (r.budgeted/max)*100, spentPct = (r.spent/max)*100;
+    return `<div style="margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:2px">
+        <span>${escapeHtml(r.cat.name)}</span>
+        <span class="num" style="color:${over?'var(--red)':'var(--muted)'}">${money(r.spent)} / ${money(r.budgeted)}</span>
+      </div>
+      <div style="height:7px;border-radius:4px;background:#EEF0EA;position:relative;overflow:hidden">
+        <div style="position:absolute;left:0;top:0;bottom:0;width:${budgetPct}%;background:#D7DCD3"></div>
+        <div style="position:absolute;left:0;top:0;bottom:0;width:${spentPct}%;background:${over?'var(--red)':'var(--teal)'}"></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderReport() {
+  const r = buildReport(state.budgetMonth);
+  const title = monthLabel(r.ym).toUpperCase() + ' BUDGET STATUS REPORT';
+
+  const cardsHtml = `
+    <div class="cards" style="margin-bottom:16px">
+      <div class="card"><div class="label">Total budgeted</div><div class="value num">${money(r.totalBudgeted)}</div></div>
+      <div class="card"><div class="label">Total spent</div><div class="value num">${money(r.totalSpent)}</div></div>
+      ${r.isCurrentMonth ? `<div class="card"><div class="label">Spent today</div><div class="value num">${money(r.spentToday)}</div>${r.latestTxnLabel ? `<div style="font-size:11px;color:var(--muted);margin-top:2px">${escapeHtml(r.latestTxnLabel)}</div>` : ''}</div>` : ''}
+      <div class="card ${r.totalRemaining<0?'bad':'good'}"><div class="label">Total remaining</div><div class="value num">${money(r.totalRemaining)}</div></div>
+    </div>
+  `;
+
+  const donutHtml = `<div style="display:flex;flex-direction:column;align-items:center">${donutSvg(r.pctSpent)}</div>`;
+
+  const allRowsForChart = r.overRows.concat(r.underRows).concat(r.fixedRows);
+  const chartHtml = allRowsForChart.length ? barCompareHtml(allRowsForChart) : `<p class="hint">No budgeted categories for this month yet.</p>`;
+
+  const chipsHtml = r.overRows.length ? r.overRows.map(x => `
+    <div style="background:var(--red-bg);color:var(--red);border-radius:20px;padding:6px 12px;font-size:12px;font-weight:600;white-space:nowrap">
+      ${escapeHtml(x.cat.name)} (+${money(x.spent-x.budgeted)})
+    </div>`).join('') : `<p class="hint" style="margin:0">Nothing is over budget this month.</p>`;
+
+  const overTableHtml = r.overRows.length ? `
+    <table style="margin-bottom:20px">
+      <thead><tr><th>Category</th><th class="num">Budgeted</th><th class="num">Spent</th><th class="num">Over</th><th>Key vendors</th></tr></thead>
+      <tbody>
+        ${r.overRows.map(x => `<tr>
+          <td>${escapeHtml(x.cat.name)}</td>
+          <td class="num">${money(x.budgeted)}</td>
+          <td class="num" style="color:var(--red);font-weight:600">${money(x.spent)}</td>
+          <td class="num" style="color:var(--red)">+${money(x.spent-x.budgeted)}</td>
+          <td style="font-size:12px;color:var(--muted)">${categoryVendorsForMonth(x.cat.id, r.ym).join(', ') || '—'}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>` : '';
+
+  const underTableHtml = r.underRows.length ? `
+    <table style="margin-bottom:20px">
+      <thead><tr><th>Category</th><th class="num">Budgeted</th><th class="num">Spent</th><th class="num">Remaining</th></tr></thead>
+      <tbody>
+        ${r.underRows.map(x => `<tr>
+          <td>${escapeHtml(x.cat.name)}</td>
+          <td class="num">${money(x.budgeted)}</td>
+          <td class="num">${money(x.spent)}</td>
+          <td class="num" style="color:var(--teal);font-weight:600">${money(x.budgeted-x.spent)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>` : '';
+
+  const fixedHtml = r.fixedRows.length ? `
+    <ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.9">
+      ${r.fixedRows.map(x => `<li><strong>${escapeHtml(x.cat.name)}:</strong> ${money(x.spent)} spent <em style="color:var(--muted)">(Budget: ${money(x.budgeted)})</em></li>`).join('')}
+    </ul>` : `<p class="hint" style="margin:0">No categories marked as fixed expenses yet — check "Fixed?" next to a category in the Budget tab.</p>`;
+
+  document.getElementById('reportContent').innerHTML = `
+    <div style="background:linear-gradient(135deg,#1E2A28,#2F6F63);color:#fff;border-radius:14px;padding:18px 20px;margin-bottom:18px">
+      <div style="font-family:Georgia,serif;font-size:18px;font-weight:600;letter-spacing:0.3px">${title}</div>
+    </div>
+    ${cardsHtml}
+    <div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:20px">
+      <div style="flex:0 0 auto">${donutHtml}</div>
+      <div style="flex:1;min-width:220px">${chartHtml}</div>
+    </div>
+    <div style="font-weight:600;margin-bottom:8px">Overspent categories</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px">${chipsHtml}</div>
+    <div style="font-weight:600;margin-bottom:8px">🔴 Categories currently over budget</div>
+    ${overTableHtml || `<p class="hint" style="margin-bottom:20px">None this month.</p>`}
+    <div style="font-weight:600;margin-bottom:8px">🟢 Categories under budget / outstanding balance available</div>
+    ${underTableHtml || `<p class="hint" style="margin-bottom:20px">None this month.</p>`}
+    <div style="font-weight:600;margin-bottom:8px">🔒 Fixed expenses</div>
+    ${fixedHtml}
+  `;
+}
+
+function openReportModal() { renderReport(); document.getElementById('reportModalOverlay').style.display = 'flex'; }
+function closeReportModal() { document.getElementById('reportModalOverlay').style.display = 'none'; }
+document.getElementById('reportBtn').addEventListener('click', openReportModal);
+document.getElementById('reportCloseBtn').addEventListener('click', closeReportModal);
+document.getElementById('reportModalOverlay').addEventListener('click', e => { if (e.target.id === 'reportModalOverlay') closeReportModal(); });
+document.getElementById('reportPrintBtn').addEventListener('click', () => window.print());
+
 function render() {
   document.getElementById('dashMonth').value = state.dashboardMonth;
   document.getElementById('budgetMonth').value = state.budgetMonth;
@@ -584,6 +780,7 @@ function renderBudgetMonth() {
     const over = budgeted > 0 && actual > budgeted && !cat.isIncome;
     return `<tr>
       <td class="checkbox-cell"><input type="checkbox" class="catIncome" data-id="${cat.id}" ${cat.isIncome?'checked':''}></td>
+      <td class="checkbox-cell"><input type="checkbox" class="catFixed" data-id="${cat.id}" ${cat.isFixed?'checked':''}></td>
       <td><input type="text" class="cell-input catName" data-id="${cat.id}" value="${escapeHtml(cat.name)}"></td>
       <td class="num"><input type="text" inputmode="decimal" class="cell-input num catMonthBudget" data-id="${cat.id}" data-m="${mIdx}" value="${budgeted ? fmtAmt(budgeted) : ''}"></td>
       <td class="num">${money(actual)}</td>
@@ -597,7 +794,7 @@ function renderBudgetMonth() {
 
 function renderBudgetYear() {
   const head = document.getElementById('budgetYearHead');
-  head.innerHTML = '<th>Income?</th><th>Category</th>' +
+  head.innerHTML = '<th>Income?</th><th>Fixed?</th><th>Category</th>' +
     MONTH_NAMES.map((m, i) => `<th class="num">${m}${i < 11 ? `<div class="fillRight" data-allrows="1" data-m="${i}" title="Copy every category's ${m} amount to ${MONTH_NAMES[i+1]}–Dec">→ all rest</div>` : ''}</th>`).join('') +
     '<th class="num">Balance (year)</th><th></th>';
   document.getElementById('budgetYearRows').innerHTML = state.categories.map(cat => {
@@ -607,6 +804,7 @@ function renderBudgetYear() {
       </td>`).join('');
     return `<tr>
       <td class="checkbox-cell"><input type="checkbox" class="catIncome" data-id="${cat.id}" ${cat.isIncome?'checked':''}></td>
+      <td class="checkbox-cell"><input type="checkbox" class="catFixed" data-id="${cat.id}" ${cat.isFixed?'checked':''}></td>
       <td><input type="text" class="cell-input catName" data-id="${cat.id}" value="${escapeHtml(cat.name)}" style="min-width:110px"></td>
       ${monthCells}
       <td class="num yeartotal">${money(categoryYearTotal(cat))}</td>
@@ -664,6 +862,13 @@ function wireBudgetRowEvents() {
     inp.addEventListener('change', e => {
       const cat = state.categories.find(c => c.id === e.target.dataset.id);
       if (cat) cat.isIncome = e.target.checked;
+      commit();
+    });
+  });
+  document.querySelectorAll('.catFixed').forEach(inp => {
+    inp.addEventListener('change', e => {
+      const cat = state.categories.find(c => c.id === e.target.dataset.id);
+      if (cat) cat.isFixed = e.target.checked;
       commit();
     });
   });
