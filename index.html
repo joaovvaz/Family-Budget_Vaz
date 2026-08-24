@@ -75,12 +75,15 @@
   .modal-box .field input, .modal-box .field select { font-family: inherit; font-size: 14px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; width: 100%; }
   .report-box { max-width: 720px; max-height: 88vh; overflow-y: auto; }
   @media print {
-    body * { visibility: hidden; }
-    .report-box, .report-box * { visibility: visible; }
-    .modal-overlay { position: static !important; background: none !important; padding: 0 !important; display: block !important; inset: auto !important; }
+    .wrap > *:not(#reportModalOverlay) { display: none !important; }
+    #txnModalOverlay { display: none !important; }
+    #reportModalOverlay {
+      display: block !important; position: static !important; background: none !important;
+      padding: 0 !important; inset: auto !important;
+    }
     .report-box {
       position: static !important; left: auto; top: auto; width: 100%; max-width: 100%;
-      max-height: none !important; overflow: visible !important; box-shadow: none; padding: 0;
+      max-height: none !important; overflow: visible !important; box-shadow: none; padding: 0; margin: 0;
     }
     table { page-break-inside: auto; }
     tr { page-break-inside: avoid; page-break-after: auto; }
