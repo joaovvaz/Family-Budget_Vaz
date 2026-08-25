@@ -136,6 +136,15 @@
   .netrow td { font-weight: 600; background: #EEF0EA; }
   .starting-row td { color: var(--muted); background: #FAFBF8; font-size: 12px; }
   .starting-row em { font-style: italic; }
+  .split-badge { font-size: 11px; background: var(--amber-bg); color: var(--amber); border-radius: 6px; padding: 4px 6px; cursor: pointer; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .split-link { font-size: 9px; color: var(--muted); text-align: center; cursor: pointer; text-decoration: underline; opacity: 0.7; }
+  .split-link:hover { opacity: 1; color: var(--teal); }
+  .split-row { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
+  .split-row select { flex: 1; }
+  .split-row input { width: 90px; }
+  .split-remaining { font-size: 13px; margin: 10px 0; padding: 8px 10px; border-radius: 8px; }
+  .split-remaining.balanced { background: var(--teal-bg); color: #1B4A41; }
+  .split-remaining.unbalanced { background: var(--amber-bg); color: #7A4A18; }
   .fillRight { font-size: 9px; color: var(--muted); cursor: pointer; text-align: center; margin-top: 1px; opacity: 0.55; text-transform: none; font-weight: 400; }
   .fillRight:hover { opacity: 1; color: var(--teal); text-decoration: underline; }
 </style>
@@ -281,6 +290,21 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="splitModalOverlay" style="display:none">
+    <div class="modal-box">
+      <h3 style="margin:0 0 4px;font-family:Georgia,serif">Split this transaction</h3>
+      <div class="hint" id="splitModalTotal" style="margin-bottom:12px"></div>
+      <div id="splitRowsContainer"></div>
+      <button id="addSplitRowBtn" style="margin-bottom:4px">+ Add category</button>
+      <div class="split-remaining" id="splitRemaining"></div>
+      <div style="display:flex; gap:8px; justify-content:flex-end">
+        <button id="splitCancelBtn">Cancel</button>
+        <button id="splitClearBtn" style="color:var(--red);border-color:var(--red)">Remove split</button>
+        <button class="primary" id="splitSaveBtn">Save</button>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <script>
@@ -344,7 +368,10 @@ function migrate(raw) {
   const fixEntries = (list) => (list||[]).map(e => ({
     id: e.id||uid(), date: e.date||todayStr(),
     vendor: e.vendor !== undefined ? e.vendor : (e.desc||''),
-    categoryId: e.categoryId||'', amount: Number(e.amount)||0
+    categoryId: e.categoryId||'', amount: Number(e.amount)||0,
+    splits: (Array.isArray(e.splits) && e.splits.length)
+      ? e.splits.map(s => ({id: s.id||uid(), categoryId: s.categoryId||'', amount: Math.abs(Number(s.amount)||0)}))
+      : undefined
   }));
   s.checkingEntries = fixEntries(raw.checkingEntries);
   s.ccEntries = fixEntries(raw.ccEntries);
@@ -542,17 +569,43 @@ document.getElementById('ccCsvInput').addEventListener('change', async e => {
   e.target.value = '';
 });
 
+function entryContributions(e) {
+  if (e.splits && e.splits.length) {
+    const sign = e.amount < 0 ? -1 : 1;
+    return e.splits.map(s => ({categoryId: s.categoryId, amount: sign * Math.abs(Number(s.amount)||0)}));
+  }
+  return [{categoryId: e.categoryId, amount: e.amount}];
+}
+function entryMatchesCategoryFilter(e, filterCatId) {
+  if (!filterCatId) return true;
+  const contributions = entryContributions(e);
+  if (filterCatId === '__uncategorized__') return contributions.some(c => !c.categoryId);
+  return contributions.some(c => c.categoryId === filterCatId);
+}
+
 function categorySpentForMonth(catId, yyyymm) {
   let spent = 0;
-  state.checkingEntries.forEach(e => { if (e.categoryId === catId && monthKey(e.date) === yyyymm && e.amount < 0) spent += -e.amount; });
-  state.ccEntries.forEach(e => { if (e.categoryId === catId && monthKey(e.date) === yyyymm && e.amount > 0) spent += e.amount; });
+  state.checkingEntries.forEach(e => {
+    if (monthKey(e.date) !== yyyymm) return;
+    entryContributions(e).forEach(c => { if (c.categoryId === catId && c.amount < 0) spent += -c.amount; });
+  });
+  state.ccEntries.forEach(e => {
+    if (monthKey(e.date) !== yyyymm) return;
+    entryContributions(e).forEach(c => { if (c.categoryId === catId && c.amount > 0) spent += c.amount; });
+  });
   return spent;
 }
 function categoryActualForMonth(catId, yyyymm, isIncome) {
   if (isIncome) {
     let total = 0;
-    state.checkingEntries.forEach(e => { if (e.categoryId === catId && monthKey(e.date) === yyyymm && e.amount > 0) total += e.amount; });
-    state.ccEntries.forEach(e => { if (e.categoryId === catId && monthKey(e.date) === yyyymm && e.amount < 0) total += -e.amount; });
+    state.checkingEntries.forEach(e => {
+      if (monthKey(e.date) !== yyyymm) return;
+      entryContributions(e).forEach(c => { if (c.categoryId === catId && c.amount > 0) total += c.amount; });
+    });
+    state.ccEntries.forEach(e => {
+      if (monthKey(e.date) !== yyyymm) return;
+      entryContributions(e).forEach(c => { if (c.categoryId === catId && c.amount < 0) total += -c.amount; });
+    });
     return total;
   }
   return categorySpentForMonth(catId, yyyymm);
@@ -601,15 +654,14 @@ function monthIdxFromYm(ym) { return parseInt((ym||currentMonthStr()).slice(5,7)
 
 function categoryVendorsForMonth(catId, yyyymm) {
   const totals = {};
+  const add = (e, amt) => { const v = e.vendor || 'Unknown'; totals[v] = (totals[v]||0) + amt; };
   state.checkingEntries.forEach(e => {
-    if (e.categoryId === catId && monthKey(e.date) === yyyymm && e.amount < 0) {
-      const v = e.vendor || 'Unknown'; totals[v] = (totals[v]||0) + (-e.amount);
-    }
+    if (monthKey(e.date) !== yyyymm) return;
+    entryContributions(e).forEach(c => { if (c.categoryId === catId && c.amount < 0) add(e, -c.amount); });
   });
   state.ccEntries.forEach(e => {
-    if (e.categoryId === catId && monthKey(e.date) === yyyymm && e.amount > 0) {
-      const v = e.vendor || 'Unknown'; totals[v] = (totals[v]||0) + e.amount;
-    }
+    if (monthKey(e.date) !== yyyymm) return;
+    entryContributions(e).forEach(c => { if (c.categoryId === catId && c.amount > 0) add(e, c.amount); });
   });
   return Object.entries(totals).sort((a,b) => b[1]-a[1]).slice(0, 4).map(([v,amt]) => `${v} (${money(amt)})`);
 }
@@ -767,6 +819,89 @@ document.getElementById('reportBtn').addEventListener('click', openReportModal);
 document.getElementById('reportCloseBtn').addEventListener('click', closeReportModal);
 document.getElementById('reportModalOverlay').addEventListener('click', e => { if (e.target.id === 'reportModalOverlay') closeReportModal(); });
 document.getElementById('reportPrintBtn').addEventListener('click', () => window.print());
+
+let splitModal = null; // {list, id, rows: [{rowId, categoryId, amount}]}
+
+function openSplitModal(list, id) {
+  const entry = state[list].find(x => x.id === id);
+  if (!entry) return;
+  const total = Math.abs(entry.amount);
+  const rows = (entry.splits && entry.splits.length)
+    ? entry.splits.map(s => ({rowId: uid(), categoryId: s.categoryId, amount: String(s.amount)}))
+    : [{rowId: uid(), categoryId: entry.categoryId, amount: String(total)}, {rowId: uid(), categoryId: '', amount: ''}];
+  splitModal = {list, id, total, rows};
+  document.getElementById('splitModalTotal').textContent = `Splitting ${money(total)} across categories`;
+  renderSplitRows();
+  document.getElementById('splitModalOverlay').style.display = 'flex';
+}
+function closeSplitModal() { document.getElementById('splitModalOverlay').style.display = 'none'; splitModal = null; }
+
+function renderSplitRows() {
+  const container = document.getElementById('splitRowsContainer');
+  container.innerHTML = splitModal.rows.map(row => `
+    <div class="split-row" data-row-id="${row.rowId}">
+      <select class="splitRowCat">${categoryOptionsHtml(row.categoryId)}</select>
+      <input type="text" inputmode="decimal" class="splitRowAmt" placeholder="Amount" value="${row.amount ? fmtAmt(Math.abs(parseAmt(row.amount))) : ''}">
+      <button class="ghost splitRowDel">&times;</button>
+    </div>`).join('');
+  container.querySelectorAll('.split-row').forEach(rowEl => {
+    const rowId = rowEl.dataset.rowId;
+    const row = splitModal.rows.find(r => r.rowId === rowId);
+    rowEl.querySelector('.splitRowCat').addEventListener('change', e => { row.categoryId = e.target.value; });
+    const amtInput = rowEl.querySelector('.splitRowAmt');
+    amtInput.addEventListener('focus', e => { e.target.value = row.amount || ''; });
+    amtInput.addEventListener('blur', e => { row.amount = String(parseAmt(e.target.value)); renderSplitRows(); });
+    amtInput.addEventListener('input', () => { row.amount = amtInput.value; updateSplitRemaining(); });
+    rowEl.querySelector('.splitRowDel').addEventListener('click', () => {
+      splitModal.rows = splitModal.rows.filter(r => r.rowId !== rowId);
+      renderSplitRows();
+      updateSplitRemaining();
+    });
+  });
+  updateSplitRemaining();
+}
+function updateSplitRemaining() {
+  const allocated = splitModal.rows.reduce((s,r) => s + Math.abs(parseAmt(r.amount)), 0);
+  const remaining = splitModal.total - allocated;
+  const el = document.getElementById('splitRemaining');
+  if (Math.abs(remaining) < 0.005) {
+    el.className = 'split-remaining balanced';
+    el.textContent = `Fully allocated — ${money(splitModal.total)}`;
+  } else {
+    el.className = 'split-remaining unbalanced';
+    el.textContent = remaining > 0 ? `${money(remaining)} left to allocate` : `${money(-remaining)} over the total — reduce a category`;
+  }
+}
+document.getElementById('addSplitRowBtn').addEventListener('click', () => {
+  splitModal.rows.push({rowId: uid(), categoryId: '', amount: ''});
+  renderSplitRows();
+});
+document.getElementById('splitCancelBtn').addEventListener('click', closeSplitModal);
+document.getElementById('splitModalOverlay').addEventListener('click', e => { if (e.target.id === 'splitModalOverlay') closeSplitModal(); });
+document.getElementById('splitClearBtn').addEventListener('click', () => {
+  const entry = state[splitModal.list].find(x => x.id === splitModal.id);
+  if (entry) { delete entry.splits; entry.categoryId = splitModal.rows[0] ? splitModal.rows[0].categoryId : ''; }
+  commit();
+  closeSplitModal();
+});
+document.getElementById('splitSaveBtn').addEventListener('click', () => {
+  const validRows = splitModal.rows.filter(r => Math.abs(parseAmt(r.amount)) > 0);
+  const allocated = validRows.reduce((s,r) => s + Math.abs(parseAmt(r.amount)), 0);
+  if (Math.abs(allocated - splitModal.total) > 0.005) {
+    alert('The split amounts need to add up to ' + money(splitModal.total) + ' before saving.');
+    return;
+  }
+  if (validRows.length < 2) {
+    alert('Add at least two categories to split this transaction, or use "Remove split" to go back to one category.');
+    return;
+  }
+  const entry = state[splitModal.list].find(x => x.id === splitModal.id);
+  entry.splits = validRows.map(r => ({id: uid(), categoryId: r.categoryId, amount: Math.abs(parseAmt(r.amount))}));
+  entry.categoryId = '';
+  commit();
+  closeSplitModal();
+});
+
 
 function render() {
   document.getElementById('dashMonth').value = state.dashboardMonth;
@@ -937,8 +1072,7 @@ function renderRegister(kind) {
   const filtered = realRows.filter(e => {
     if (filter.start && e.date < filter.start) return false;
     if (filter.end && e.date > filter.end) return false;
-    if (filter.categoryId === '__uncategorized__' && e.categoryId) return false;
-    if (filter.categoryId && filter.categoryId !== '__uncategorized__' && e.categoryId !== filter.categoryId) return false;
+    if (!entryMatchesCategoryFilter(e, filter.categoryId)) return false;
     if (searchText && !(e.vendor || '').toLowerCase().includes(searchText)) return false;
     return true;
   });
@@ -956,10 +1090,15 @@ function renderRegister(kind) {
       </tr>`;
     }
     const cat = state.categories.find(c => c.id === e.categoryId);
+    const isSplit = e.splits && e.splits.length;
+    const categoryCellHtml = isSplit
+      ? `<div class="split-badge" data-id="${e.id}" data-list="${isChecking?'checkingEntries':'ccEntries'}" title="${e.splits.map(s => { const c = state.categories.find(x=>x.id===s.categoryId); return (c?c.name:'Uncategorized') + ': ' + money(s.amount); }).join(', ')}">Split (${e.splits.length}) ✎</div>`
+      : `<select class="cell-input entryCategory" title="${escapeHtml(cat?cat.name:'Uncategorized')}">${categoryOptionsHtml(e.categoryId)}</select>
+         <div class="split-link" data-id="${e.id}" data-list="${isChecking?'checkingEntries':'ccEntries'}">Split</div>`;
     return `<tr data-list="${isChecking?'checkingEntries':'ccEntries'}" data-id="${e.id}">
       <td><input type="date" class="cell-input entryDate" value="${e.date}"></td>
       <td><input type="text" class="cell-input entryVendor" value="${escapeHtml(e.vendor)}" title="${escapeHtml(e.vendor)}"></td>
-      <td><select class="cell-input entryCategory" title="${escapeHtml(cat?cat.name:'Uncategorized')}">${categoryOptionsHtml(e.categoryId)}</select></td>
+      <td>${categoryCellHtml}</td>
       <td class="num"><input type="text" inputmode="decimal" class="cell-input num entryAmount ${e.amount<0?'neg':'pos'}" value="${fmtAmt(e.amount)}"></td>
       <td class="num">${money(e.balance)}</td>
       <td><button class="ghost delEntry">&times;</button></td>
@@ -971,11 +1110,14 @@ function renderRegister(kind) {
     const entry = state[list].find(x => x.id === id);
     tr.querySelector('.entryDate').addEventListener('change', e => { entry.date = e.target.value; commit(); });
     tr.querySelector('.entryVendor').addEventListener('change', e => { entry.vendor = e.target.value; commit(); });
-    tr.querySelector('.entryCategory').addEventListener('change', e => { entry.categoryId = e.target.value; commit(); });
+    const catSelect = tr.querySelector('.entryCategory');
+    if (catSelect) catSelect.addEventListener('change', e => { entry.categoryId = e.target.value; commit(); });
     const amtInput = tr.querySelector('.entryAmount');
     amtInput.addEventListener('focus', e => { e.target.value = entry.amount || ''; });
     amtInput.addEventListener('blur', e => { entry.amount = parseAmt(e.target.value); commit(); });
     tr.querySelector('.delEntry').addEventListener('click', () => { state[list] = state[list].filter(x => x.id !== id); commit(); });
+    const splitTrigger = tr.querySelector('.split-badge, .split-link');
+    if (splitTrigger) splitTrigger.addEventListener('click', () => openSplitModal(list, id));
   });
 
   tbody.querySelectorAll('tr[data-starting]').forEach(tr => {
