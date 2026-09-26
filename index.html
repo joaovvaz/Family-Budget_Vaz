@@ -158,6 +158,8 @@
       <span><span class="status-dot" id="statusDot"></span><span id="statusText">Not connected</span></span>
       <button id="btnSettings">Settings</button>
       <button id="btnExport">Export backup</button>
+      <button id="btnImportBackup">Import backup</button>
+      <input type="file" id="backupFileInput" accept="application/json">
     </div>
   </header>
 
@@ -439,6 +441,7 @@ async function loadFromCloud() {
     return null;
   }
 }
+let dirty = false;
 async function saveToCloud() {
   const url = getApiUrl();
   if (!url) { setStatus('Not connected', false); return; }
@@ -452,6 +455,7 @@ async function saveToCloud() {
     const text = await res.text();
     if (text.trim() === 'Forbidden') { setStatus('Token does not match the script — check Settings', false); return; }
     if (!res.ok) throw new Error('status ' + res.status);
+    dirty = false;
     setStatus('Connected — saved', true);
   } catch (e) {
     setStatus('Save failed — will retry on next change', false);
@@ -459,9 +463,23 @@ async function saveToCloud() {
 }
 function persist() {
   saveToLocalStorage();
+  dirty = true;
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(saveToCloud, 500);
+  saveTimer = setTimeout(saveToCloud, 150);
 }
+function saveBeacon() {
+  const url = getApiUrl();
+  if (!url || !dirty) return;
+  try {
+    const blob = new Blob([JSON.stringify(state)], {type: 'text/plain;charset=utf-8'});
+    navigator.sendBeacon(url + '?token=' + encodeURIComponent(getApiToken()), blob);
+  } catch (e) {}
+}
+window.addEventListener('pagehide', saveBeacon);
+window.addEventListener('beforeunload', e => {
+  if (dirty) { saveBeacon(); e.preventDefault(); e.returnValue = ''; }
+});
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveBeacon(); });
 
 document.getElementById('btnSettings').addEventListener('click', () => {
   const panel = document.getElementById('settingsPanel');
@@ -479,10 +497,28 @@ document.getElementById('saveSettingsBtn').addEventListener('click', async () =>
   document.getElementById('setupBanner').style.display = getApiUrl() ? 'none' : 'block';
 });
 document.getElementById('btnExport').addEventListener('click', () => {
-  const blob = new Blob([JSON.stringify(state, null, 2)], {type: 'application/json'});
+  const blob = new Blob([JSON.stringify(state)], {type: 'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href = url; a.download = 'budget-backup.json'; a.click();
   URL.revokeObjectURL(url);
+});
+document.getElementById('btnImportBackup').addEventListener('click', () => document.getElementById('backupFileInput').click());
+document.getElementById('backupFileInput').addEventListener('change', async e => {
+  const file = e.target.files[0]; if (!file) return;
+  const text = await file.text();
+  let parsed;
+  try { parsed = JSON.parse(text); }
+  catch (err) { alert('That file could not be read as a budget backup.'); e.target.value = ''; return; }
+  const overwrite = confirm(
+    'This will replace all current data (in this browser and on the shared sheet, if connected) with the contents of "' + file.name + '". This cannot be undone. Continue?'
+  );
+  if (!overwrite) { e.target.value = ''; return; }
+  state = migrate(parsed);
+  saveToLocalStorage();
+  await saveToCloud();
+  render();
+  alert('Backup restored' + (getApiUrl() ? ' and pushed to your shared sheet.' : ' locally. Connect to your shared sheet in Settings to sync it.'));
+  e.target.value = '';
 });
 
 document.querySelectorAll('.tab').forEach(t => {
