@@ -305,6 +305,27 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="importPreviewOverlay" style="display:none">
+    <div class="modal-box report-box">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <h3 style="margin:0;font-family:Georgia,serif">Review import</h3>
+        <button id="importPreviewCancelBtn">Cancel</button>
+      </div>
+      <div class="hint" id="importPreviewSummary" style="margin-bottom:10px"></div>
+      <div class="register-scroll">
+      <table class="register-table" id="importPreviewTable" style="min-width:560px">
+        <thead><tr><th style="width:30px"></th><th>Date</th><th>Description</th><th class="num">Amount</th><th>Category</th></tr></thead>
+        <tbody id="importPreviewRows"></tbody>
+      </table>
+      </div>
+      <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:14px">
+        <button id="importPreviewSelectAllBtn">Select all</button>
+        <button id="importPreviewNoneBtn">Select none</button>
+        <button class="primary" id="importPreviewConfirmBtn" style="margin-left:auto">Import selected</button>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <script>
@@ -525,48 +546,121 @@ function parseCSV(text) {
 function cleanChequingDescription(desc) {
   return (desc || '').replace(/Electronic Funds Transfer\s*/gi, '').trim();
 }
-function importChecking(rows) {
-  let count = 0;
-  rows.forEach(r => {
-    const [date, desc, debit, credit] = r;
-    if (!date) return;
-    const amount = credit && credit.trim() ? parseFloat(credit) : -parseFloat(debit || 0);
-    if (isNaN(amount)) return;
-    state.checkingEntries.push({id: uid(), date: date.trim(), vendor: cleanChequingDescription(desc), categoryId: '', amount});
-    count++;
-  });
-  return count;
+function isValidDateStr(s) { return /^\d{4}-\d{1,2}-\d{1,2}$/.test((s||'').trim()); }
+function parseMoneyCell(s) {
+  if (!s) return NaN;
+  const cleaned = String(s).replace(/[^0-9.\-]/g, '');
+  if (!cleaned) return NaN;
+  return parseFloat(cleaned);
 }
-function importCreditCard(rows) {
-  let count = 0;
+function previousCategoryForVendor(kind, vendor) {
+  const v = (vendor||'').trim().toLowerCase();
+  if (!v) return '';
+  const lists = kind === 'checking' ? [state.checkingEntries, state.ccEntries] : [state.ccEntries, state.checkingEntries];
+  for (const list of lists) {
+    const matches = list.filter(e => !e.splits && e.categoryId && (e.vendor||'').trim().toLowerCase() === v);
+    if (matches.length) {
+      matches.sort((a,b) => a.date < b.date ? 1 : a.date > b.date ? -1 : 0);
+      return matches[0].categoryId;
+    }
+  }
+  return '';
+}
+
+function parseChecking(rows) {
+  const staged = [];
   rows.forEach(r => {
     const [date, desc, debit, credit] = r;
-    if (!date) return;
-    const amount = debit && debit.trim() ? parseFloat(debit) : -parseFloat(credit || 0);
+    if (!isValidDateStr(date)) return;
+    const amount = (credit && credit.trim()) ? parseMoneyCell(credit) : -parseMoneyCell(debit);
     if (isNaN(amount)) return;
-    state.ccEntries.push({id: uid(), date: date.trim(), vendor: (desc||'').trim(), categoryId: '', amount});
-    count++;
+    const vendor = cleanChequingDescription(desc);
+    staged.push({rowId: uid(), date: date.trim(), vendor, amount, categoryId: previousCategoryForVendor('checking', vendor), include: true});
   });
-  return count;
+  return staged;
+}
+function parseCreditCard(rows) {
+  const staged = [];
+  rows.forEach(r => {
+    const [date, desc, debit, credit] = r;
+    if (!isValidDateStr(date)) return;
+    const amount = (debit && debit.trim()) ? parseMoneyCell(debit) : -parseMoneyCell(credit);
+    if (isNaN(amount)) return;
+    const vendor = (desc||'').trim();
+    staged.push({rowId: uid(), date: date.trim(), vendor, amount, categoryId: previousCategoryForVendor('cc', vendor), include: true});
+  });
+  return staged;
 }
 
 document.getElementById('importCheckingBtn').addEventListener('click', () => document.getElementById('checkingCsvInput').click());
 document.getElementById('checkingCsvInput').addEventListener('change', async e => {
   const file = e.target.files[0]; if (!file) return;
   const text = await file.text();
-  const n = importChecking(parseCSV(text));
-  commit();
-  alert(n + ' transactions imported. Assign categories in the table below.');
+  const staged = parseChecking(parseCSV(text));
+  if (!staged.length) { alert('No valid transactions found in that file.'); e.target.value = ''; return; }
+  openImportPreview('checking', staged);
   e.target.value = '';
 });
 document.getElementById('importCcBtn').addEventListener('click', () => document.getElementById('ccCsvInput').click());
 document.getElementById('ccCsvInput').addEventListener('change', async e => {
   const file = e.target.files[0]; if (!file) return;
   const text = await file.text();
-  const n = importCreditCard(parseCSV(text));
-  commit();
-  alert(n + ' transactions imported. Assign categories in the table below.');
+  const staged = parseCreditCard(parseCSV(text));
+  if (!staged.length) { alert('No valid transactions found in that file.'); e.target.value = ''; return; }
+  openImportPreview('cc', staged);
   e.target.value = '';
+});
+
+let importPreview = null; // {kind, rows}
+
+function openImportPreview(kind, rows) {
+  importPreview = {kind, rows};
+  const suggestedCount = rows.filter(r => r.categoryId).length;
+  document.getElementById('importPreviewSummary').textContent =
+    `${rows.length} transaction${rows.length===1?'':'s'} found — ${suggestedCount} pre-filled from past categorizations. Uncheck any you don't want to import.`;
+  renderImportPreviewRows();
+  document.getElementById('importPreviewOverlay').style.display = 'flex';
+}
+function closeImportPreview() { document.getElementById('importPreviewOverlay').style.display = 'none'; importPreview = null; }
+
+function renderImportPreviewRows() {
+  const tbody = document.getElementById('importPreviewRows');
+  tbody.innerHTML = importPreview.rows.map(r => `
+    <tr data-row-id="${r.rowId}">
+      <td style="text-align:center"><input type="checkbox" class="previewInclude" ${r.include?'checked':''}></td>
+      <td>${r.date}</td>
+      <td title="${escapeHtml(r.vendor)}">${escapeHtml(r.vendor)}</td>
+      <td class="num ${r.amount<0?'neg':'pos'}">${fmtAmt(r.amount)}</td>
+      <td><select class="previewCategory">${categoryOptionsHtml(r.categoryId)}</select></td>
+    </tr>`).join('');
+  tbody.querySelectorAll('tr').forEach(tr => {
+    const rowId = tr.dataset.rowId;
+    const row = importPreview.rows.find(x => x.rowId === rowId);
+    tr.querySelector('.previewInclude').addEventListener('change', e => { row.include = e.target.checked; tr.style.opacity = e.target.checked ? '1' : '0.4'; });
+    tr.querySelector('.previewCategory').addEventListener('change', e => { row.categoryId = e.target.value; });
+    if (!row.include) tr.style.opacity = '0.4';
+  });
+}
+document.getElementById('importPreviewSelectAllBtn').addEventListener('click', () => {
+  importPreview.rows.forEach(r => r.include = true);
+  renderImportPreviewRows();
+});
+document.getElementById('importPreviewNoneBtn').addEventListener('click', () => {
+  importPreview.rows.forEach(r => r.include = false);
+  renderImportPreviewRows();
+});
+document.getElementById('importPreviewCancelBtn').addEventListener('click', closeImportPreview);
+document.getElementById('importPreviewOverlay').addEventListener('click', e => { if (e.target.id === 'importPreviewOverlay') closeImportPreview(); });
+document.getElementById('importPreviewConfirmBtn').addEventListener('click', () => {
+  const list = importPreview.kind === 'checking' ? state.checkingEntries : state.ccEntries;
+  let count = 0;
+  importPreview.rows.forEach(r => {
+    if (!r.include) return;
+    list.push({id: uid(), date: r.date, vendor: r.vendor, categoryId: r.categoryId, amount: r.amount});
+    count++;
+  });
+  commit();
+  closeImportPreview();
 });
 
 function entryContributions(e) {
