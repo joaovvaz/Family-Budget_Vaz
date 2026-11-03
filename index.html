@@ -4,6 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Household Budget</title>
+<meta name="theme-color" content="#2F6F63">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Budget">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <style>
   :root {
     --bg: #F5F6F2; --card: #FFFFFF; --ink: #1E2A28; --muted: #6B7570; --line: #DDE2DA;
@@ -49,6 +54,10 @@
   .bar-fill.over { background: var(--red); }
   .addrow { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
   .addrow input, .addrow select { font-family: inherit; font-size: 13px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; }
+  .rule-link { font-size: 11px; color: var(--teal); cursor: pointer; white-space: nowrap; }
+  .rule-link:hover { text-decoration: underline; }
+  .dup-flag { font-size: 11px; color: #B7791F; cursor: pointer; margin-top: 2px; white-space: nowrap; }
+  .dup-flag:hover { text-decoration: underline; }
   .neg { color: var(--red); } .pos { color: var(--teal); }
   .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
   .banner { font-size: 13px; padding: 10px 14px; border-radius: 10px; margin-bottom: 16px; }
@@ -167,6 +176,8 @@
     Not connected to your shared sheet yet. Click <strong>Settings</strong> above and paste in your Apps Script Web App URL to start syncing.
   </div>
 
+  <div class="banner warn" id="migrateBanner" style="display:none"></div>
+
   <div class="banner info" id="settingsPanel" style="display:none">
     <div class="field-row" style="margin-bottom:8px">
       <div class="field" style="flex:2;min-width:260px"><label>Apps Script Web App URL</label><input type="text" id="apiUrlInput" placeholder="https://script.google.com/macros/s/.../exec"></div>
@@ -199,7 +210,9 @@
       <input type="text" id="newCatName" placeholder="New category name">
       <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:4px"><input type="checkbox" id="newCatIncome"> Income category</label>
       <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:4px"><input type="checkbox" id="newCatFixed"> Fixed expense</label>
+      <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:4px" title="For card payments and moves between your own accounts. Kept out of income and spending totals."><input type="checkbox" id="newCatTransfer"> Transfer</label>
       <button id="addCatBtn">Add category</button>
+      <button id="rulesBtn">⚙ Rules</button>
       <button id="reportBtn" class="primary" style="margin-left:auto">📊 Report</button>
     </div>
 
@@ -209,7 +222,7 @@
       </div>
       <div class="cards" id="budgetMonthSummary" style="margin-bottom:14px"></div>
       <table>
-        <thead><tr><th>Income?</th><th>Fixed?</th><th>Category</th><th class="num">Budgeted</th><th class="num">Actual</th><th class="num">Remaining</th><th>Usage</th><th></th></tr></thead>
+        <thead><tr><th>Income?</th><th>Fixed?</th><th title="Transfers and card payments: left out of all totals">Transfer?</th><th>Category</th><th class="num">Budgeted</th><th class="num">Actual</th><th class="num">Remaining</th><th>Usage</th><th></th></tr></thead>
         <tbody id="budgetMonthRows"></tbody>
       </table>
     </div>
@@ -230,6 +243,7 @@
       <div class="field"><label>Category</label><select id="checkingFilterCat"><option value="">All</option></select></div>
       <div class="field"><label>Description</label><input type="text" id="checkingFilterText" placeholder="e.g. Uber"></div>
       <button id="importCheckingBtn">Import bank CSV</button>
+      <button id="pasteCheckingBtn">Paste transactions</button>
       <input type="file" id="checkingCsvInput" accept=".csv">
       <div class="hint" style="align-self:center">Expenses: negative. Deposits/income: positive.</div>
       <button class="primary" id="addCheckingBtn" style="margin-left:auto">+ Add transaction</button>
@@ -249,6 +263,7 @@
       <div class="field"><label>Category</label><select id="ccFilterCat"><option value="">All</option></select></div>
       <div class="field"><label>Description</label><input type="text" id="ccFilterText" placeholder="e.g. Uber"></div>
       <button id="importCcBtn">Import bank CSV</button>
+      <button id="pasteCcBtn">Paste transactions</button>
       <input type="file" id="ccCsvInput" accept=".csv">
       <div class="hint" style="align-self:center">Charges: positive. Payments you make: negative.</div>
       <button class="primary" id="addCcBtn" style="margin-left:auto">+ Add transaction</button>
@@ -261,6 +276,43 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="pasteModalOverlay" style="display:none">
+    <div class="modal-box report-box">
+      <h3 id="pasteTitle" style="margin:0 0 6px;font-family:Georgia,serif">Paste transactions</h3>
+      <div class="hint" style="margin-bottom:8px">Paste the CSV from the bank-csv skill (Date, Description, Debit, Credit), or rows copied from your bank's website. You'll review everything before it's added.</div>
+      <textarea id="pasteText" style="width:100%;min-height:170px;font-family:ui-monospace,Menlo,monospace;font-size:12px;padding:8px;border:1px solid var(--line);border-radius:8px" placeholder="Date,Description,Debit,Credit&#10;2026-11-02,COSTCO WHOLESALE,$154.20,"></textarea>
+      <div class="field" style="margin-top:10px">
+        <label>If your rows have a single amount column, a positive amount means:</label>
+        <select id="pasteSign"><option value="in">Money in (deposits, payments)</option><option value="out">Money out (purchases, withdrawals)</option></select>
+      </div>
+      <div class="hint" id="pasteMsg" style="margin-top:8px;color:var(--red)"></div>
+      <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:12px">
+        <button id="pasteCancelBtn">Cancel</button>
+        <button class="primary" id="pasteGoBtn">Review →</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="rulesModalOverlay" style="display:none">
+    <div class="modal-box report-box">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <h3 style="margin:0;font-family:Georgia,serif">Category rules</h3>
+        <button id="rulesCloseBtn">Close</button>
+      </div>
+      <div class="hint" style="margin-bottom:10px">If a description contains the keyword (any capitalization), imports are pre-filled with that category. A description you've categorized before always wins; otherwise the first matching rule below applies.</div>
+      <div class="field-row" style="margin-bottom:10px">
+        <div class="field"><label>Keyword</label><input type="text" id="ruleKeyword" placeholder="e.g. COSTCO"></div>
+        <div class="field"><label>Category</label><select id="ruleCat"></select></div>
+        <button class="primary" id="ruleAddBtn">Add rule</button>
+      </div>
+      <table><tbody id="rulesRows"></tbody></table>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:12px">
+        <button id="rulesApplyBtn">Apply rules to uncategorized transactions</button>
+        <span class="hint" id="rulesMsg"></span>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-overlay" id="txnModalOverlay" style="display:none">
     <div class="modal-box">
       <h3 id="txnModalTitle" style="margin:0 0 14px;font-family:Georgia,serif">Add transaction</h3>
@@ -269,13 +321,15 @@
         <label>Type</label>
         <div id="modalTypeGroup" style="display:flex; gap:16px; padding:4px 0"></div>
       </div>
-      <div class="field" style="margin-bottom:10px"><label>Description</label><input type="text" id="modalDesc" placeholder="Description"></div>
+      <div class="field" style="margin-bottom:10px"><label>Description</label><input type="text" id="modalDesc" placeholder="Description" list="vendorList" autocomplete="off"><datalist id="vendorList"></datalist></div>
       <div class="field" style="margin-bottom:10px"><label>Category</label><select id="modalCat"></select></div>
       <div class="field" style="margin-bottom:14px"><label>Amount</label><input type="text" inputmode="decimal" id="modalAmt" placeholder="Amount"></div>
       <div style="display:flex; gap:8px; justify-content:flex-end">
         <button id="modalCancelBtn">Cancel</button>
+        <button id="modalAddMoreBtn">Add &amp; add another</button>
         <button class="primary" id="modalAddBtn">Add</button>
       </div>
+      <div class="hint" id="modalAddedMsg" style="text-align:right;margin-top:8px;min-height:16px;color:var(--teal)"></div>
     </div>
   </div>
 
@@ -323,6 +377,7 @@
       <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:14px">
         <button id="importPreviewSelectAllBtn">Select all</button>
         <button id="importPreviewNoneBtn">Select none</button>
+        <button id="importPreviewNewBtn">Select new only</button>
         <button class="primary" id="importPreviewConfirmBtn" style="margin-left:auto">Import selected</button>
       </div>
     </div>
@@ -372,7 +427,10 @@ function defaultState() {
     dashboardMonth: currentMonthStr(),
     budgetMonth: currentMonthStr(),
     checkingFilter: {start: '', end: '', categoryId: '', text: ''},
-    ccFilter: {start: '', end: '', categoryId: '', text: ''}
+    ccFilter: {start: '', end: '', categoryId: '', text: ''},
+    transferCategoryIds: [],
+    dupOkIds: [],
+    catRules: []
   };
 }
 
@@ -402,6 +460,9 @@ function migrate(raw) {
   s.ccFilter = Object.assign({start:'', end:'', categoryId:'', text:''}, raw.ccFilter || {});
   s.dashboardMonth = raw.dashboardMonth || (raw.periodStart ? raw.periodStart.slice(0,7) : currentMonthStr());
   s.budgetMonth = raw.budgetMonth || s.dashboardMonth;
+  s.transferCategoryIds = Array.isArray(raw.transferCategoryIds) ? raw.transferCategoryIds.filter(x => typeof x === 'string') : [];
+  s.dupOkIds = Array.isArray(raw.dupOkIds) ? raw.dupOkIds.filter(x => typeof x === 'string') : [];
+  s.catRules = Array.isArray(raw.catRules) ? raw.catRules.filter(r => r && typeof r.keyword === 'string' && r.keyword.trim()).map(r => ({id: r.id || uid(), keyword: r.keyword.trim(), categoryId: r.categoryId || ''})) : [];
   s.checkingStart = Number(raw.checkingStart)||0;
   s.ccStart = Number(raw.ccStart)||0;
   const earliestDate = (list) => list.reduce((min,e) => (!min || e.date < min) ? e.date : min, '');
@@ -413,73 +474,325 @@ function migrate(raw) {
 
 let state = defaultState();
 let budgetView = 'month';
-let saveTimer = null;
 
 function setStatus(text, connected) { document.getElementById('statusText').textContent = text; document.getElementById('statusDot').classList.toggle('connected', !!connected); }
 
+// <SYNC-START>
+/* ------------------------------------------------------------------
+   Row-level sync with the Google Sheet (Apps Script v2).
+   - Every transaction / category / setting is one row, identified by id.
+   - The app only sends rows that changed and only receives rows changed
+     by someone else since its last pull (cursor).
+   - Deleting writes a tombstone row, so a stale device can never
+     resurrect or wipe other people's data.
+   ------------------------------------------------------------------ */
+const SETTING_KEYS = ['checkingStart', 'checkingStartDate', 'ccStart', 'ccStartDate', 'transferCategoryIds', 'dupOkIds', 'catRules'];
+const ARRAY_SETTINGS = ['transferCategoryIds', 'dupOkIds', 'catRules'];
+let meta = {url: '', cursor: 0, synced: false, known: {}, pending: {}};
+let flushing = false, syncing = false, flushTimer = null, lastSyncOk = '';
+
 function saveToLocalStorage() { try { localStorage.setItem('budgetStateCache', JSON.stringify(state)); } catch (e) {} }
 function loadFromLocalStorage() { try { return localStorage.getItem('budgetStateCache'); } catch (e) { return null; } }
-
 function getApiUrl() { try { return localStorage.getItem('apiUrl') || ''; } catch(e) { return ''; } }
 function getApiToken() { try { return localStorage.getItem('apiToken') || ''; } catch(e) { return ''; } }
+function setStatus(text, connected) { document.getElementById('statusText').textContent = text; document.getElementById('statusDot').classList.toggle('connected', !!connected); }
 
-async function loadFromCloud() {
+function saveMeta() { try { localStorage.setItem('budgetSyncMeta', JSON.stringify(meta)); } catch (e) {} }
+function loadMeta() {
+  let m = null;
+  try { m = JSON.parse(localStorage.getItem('budgetSyncMeta') || 'null'); } catch (e) {}
   const url = getApiUrl();
-  if (!url) return null;
-  try {
-    setStatus('Loading…', false);
-    const res = await fetch(url + '?token=' + encodeURIComponent(getApiToken()));
-    const text = await res.text();
-    if (text.trim() === 'Forbidden') { setStatus('Token does not match the script — check Settings', false); return null; }
-    if (text.trim().startsWith('<')) { setStatus('Got a login/error page instead of data — check deployment access is set to "Anyone"', false); return null; }
-    if (!res.ok) { setStatus('Server error (status ' + res.status + ')', false); return null; }
-    const data = JSON.parse(text);
-    setStatus('Connected — synced', true);
-    return data;
-  } catch (e) {
-    setStatus('Network error reaching the sheet — check the URL in Settings', false);
-    return null;
-  }
+  if (m && m.url === url && m.known && m.pending) meta = m;
+  else meta = {url: url, cursor: 0, synced: false, known: {}, pending: {}};
 }
-let dirty = false;
-async function saveToCloud() {
-  const url = getApiUrl();
-  if (!url) { setStatus('Not connected', false); return; }
-  try {
-    setStatus('Saving…', true);
-    const res = await fetch(url + '?token=' + encodeURIComponent(getApiToken()), {
-      method: 'POST',
-      headers: {'Content-Type': 'text/plain;charset=utf-8'},
-      body: JSON.stringify(state)
+function pendingCount() { return Object.keys(meta.pending).length; }
+function hasUnsaved() { return flushing || pendingCount() > 0; }
+
+function hashStr(s) {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (h2 >>> 0).toString(36) + (h1 >>> 0).toString(36) + s.length.toString(36);
+}
+
+function txRow(e, kind) {
+  return {t: 'tx', id: e.id, kind: kind, date: e.date || '', vendor: String(e.vendor == null ? '' : e.vendor),
+    categoryId: e.categoryId || '', amount: Number(e.amount) || 0,
+    splits: (e.splits && e.splits.length) ? e.splits.map(s => ({id: s.id, categoryId: s.categoryId || '', amount: Number(s.amount) || 0})) : null};
+}
+function localRows() {
+  const out = {};
+  state.checkingEntries.forEach(e => { out['tx:' + e.id] = txRow(e, 'chk'); });
+  state.ccEntries.forEach(e => { out['tx:' + e.id] = txRow(e, 'cc'); });
+  state.categories.forEach((c, i) => {
+    const m = (c.monthly || []).slice(0, 12).map(x => Number(x) || 0);
+    while (m.length < 12) m.push(0);
+    out['cat:' + c.id] = {t: 'cat', id: c.id, name: c.name || '', isIncome: !!c.isIncome, isFixed: !!c.isFixed, monthly: m, order: i};
+  });
+  SETTING_KEYS.forEach(k => { out['set:' + k] = {t: 'set', key: k, value: ARRAY_SETTINGS.indexOf(k) !== -1 ? JSON.stringify(k === 'catRules' ? (state[k] || []) : (state[k] || []).slice().sort()) : String(state[k] == null ? '' : state[k])}; });
+  return out;
+}
+function tombstone(key, u) {
+  const t = key.slice(0, key.indexOf(':')), id = key.slice(key.indexOf(':') + 1);
+  if (t === 'tx') return {t: 'tx', id: id, kind: '', date: '', vendor: '', categoryId: '', amount: 0, splits: null, deleted: 1, updatedAt: u};
+  return {t: 'cat', id: id, name: '', isIncome: false, isFixed: false, monthly: [], order: 0, deleted: 1, updatedAt: u};
+}
+
+// Compare the current state with what the sheet is known to hold; queue only the differences.
+function queueChanges() {
+  const rows = localRows(), now = Date.now();
+  let n = 0;
+  Object.keys(rows).forEach(k => {
+    const sg = hashStr(JSON.stringify(rows[k])), kn = meta.known[k];
+    if (!kn || kn.sig !== sg) {
+      const u = Math.max(now, (kn ? kn.u : 0) + 1);
+      meta.known[k] = {sig: sg, u: u};
+      meta.pending[k] = Object.assign({}, rows[k], {updatedAt: u});
+      n++;
+    }
+  });
+  Object.keys(meta.known).forEach(k => {
+    if (!(k in rows) && meta.known[k].sig !== 'DEL' && !k.startsWith('set:')) {
+      const u = Math.max(now, meta.known[k].u + 1);
+      meta.known[k] = {sig: 'DEL', u: u};
+      meta.pending[k] = tombstone(k, u);
+      n++;
+    }
+  });
+  return n;
+}
+
+// Apply rows received from the sheet to the local state. Returns true if anything changed.
+function applyServerRows(data) {
+  const incoming = [];
+  (data.transactions || []).forEach(r => incoming.push(['tx:' + r.id, 'tx', r]));
+  (data.categories || []).forEach(r => incoming.push(['cat:' + r.id, 'cat', r]));
+  (data.settings || []).forEach(r => incoming.push(['set:' + r.key, 'set', r]));
+  const order = {};
+  state.categories.forEach((c, i) => { order[c.id] = i; });
+  let changed = false, catTouched = false;
+  const applied = [];
+  incoming.forEach(([key, t, r]) => {
+    const kn = meta.known[key], pe = meta.pending[key];
+    if (pe && pe.updatedAt > r.updatedAt) return;
+    if (kn && kn.u >= r.updatedAt) return;
+    if (t === 'tx') {
+      state.checkingEntries = state.checkingEntries.filter(e => e.id !== r.id);
+      state.ccEntries = state.ccEntries.filter(e => e.id !== r.id);
+      if (!r.deleted) {
+        const e = {id: r.id, date: r.date, vendor: r.vendor, categoryId: r.categoryId, amount: r.amount};
+        if (r.splits && r.splits.length) e.splits = r.splits;
+        (r.kind === 'cc' ? state.ccEntries : state.checkingEntries).push(e);
+      }
+    } else if (t === 'cat') {
+      state.categories = state.categories.filter(c => c.id !== r.id);
+      if (!r.deleted) {
+        state.categories.push({id: r.id, name: r.name, isIncome: !!r.isIncome, isFixed: !!r.isFixed, monthly: r.monthly});
+        order[r.id] = r.order;
+      }
+      catTouched = true;
+    } else {
+      if (r.key === 'checkingStart' || r.key === 'ccStart') state[r.key] = Number(r.value) || 0;
+      else if (ARRAY_SETTINGS.indexOf(r.key) !== -1) { try { const a = JSON.parse(r.value); state[r.key] = Array.isArray(a) ? a : []; } catch (e) { state[r.key] = []; } }
+      else state[r.key] = r.value;
+    }
+    applied.push([key, r]);
+    changed = true;
+  });
+  if (catTouched) {
+    state.categories.sort((a, b) => (order[a.id] == null ? 1e9 : order[a.id]) - (order[b.id] == null ? 1e9 : order[b.id]));
+  }
+  if (applied.length) {
+    const rows = localRows();
+    applied.forEach(([key, r]) => {
+      delete meta.pending[key];
+      meta.known[key] = {sig: (r.deleted || !rows[key]) ? 'DEL' : hashStr(JSON.stringify(rows[key])), u: r.updatedAt};
     });
+  }
+  return changed;
+}
+
+async function api(action, payload, extra) {
+  const url = getApiUrl();
+  if (!url) return {ok: false, msg: 'Not connected'};
+  const q = '?token=' + encodeURIComponent(getApiToken()) + '&action=' + action + (extra || '');
+  try {
+    const res = await fetch(url + q, payload ? {method: 'POST', headers: {'Content-Type': 'text/plain;charset=utf-8'}, body: JSON.stringify(payload)} : undefined);
     const text = await res.text();
-    if (text.trim() === 'Forbidden') { setStatus('Token does not match the script — check Settings', false); return; }
-    if (!res.ok) throw new Error('status ' + res.status);
-    dirty = false;
-    setStatus('Connected — saved', true);
+    if (text.trim() === 'Forbidden') return {ok: false, msg: 'Token does not match the script — check Settings'};
+    if (text.trim().startsWith('<')) return {ok: false, msg: 'Got a login/error page — check the deployment access is "Anyone"'};
+    if (!res.ok) return {ok: false, msg: 'Server error (status ' + res.status + ')'};
+    let data;
+    try { data = JSON.parse(text); } catch (e) { return {ok: false, msg: 'Unexpected response from the script'}; }
+    if (data && data.status === 'error') return {ok: false, msg: data.message || 'The script reported an error'};
+    return {ok: true, data: data};
   } catch (e) {
-    setStatus('Save failed — will retry on next change', false);
+    return {ok: false, msg: 'Offline or cannot reach the sheet — changes are kept on this device'};
   }
 }
+async function pullRows(since) {
+  const r = await api('pull', null, '&since=' + since);
+  if (!r.ok) return r;
+  if (!r.data || r.data.status !== 'ok' || !Array.isArray(r.data.transactions)) {
+    return {ok: false, msg: 'The Google script is still the old version — paste the new Code.gs and deploy a New version'};
+  }
+  return r;
+}
+
+async function flush() {
+  if (flushing) return false;
+  flushing = true;
+  try {
+    while (pendingCount() > 0) {
+      const keys = Object.keys(meta.pending).slice(0, 400);
+      const batch = {};
+      keys.forEach(k => { batch[k] = meta.pending[k]; });
+      const payload = {v: 2, tx: [], cats: [], settings: []};
+      keys.forEach(k => {
+        const row = Object.assign({}, batch[k]); const t = row.t; delete row.t;
+        (t === 'tx' ? payload.tx : t === 'cat' ? payload.cats : payload.settings).push(row);
+      });
+      setStatus('Saving…', true);
+      const r = await api('push', payload);
+      if (!r.ok) { setStatus(r.msg, false); return false; }
+      if (r.data.status !== 'ok') { setStatus('Save was not confirmed by the sheet', false); return false; }
+      keys.forEach(k => { if (meta.pending[k] === batch[k]) delete meta.pending[k]; });
+      const rej = r.data.rejected;
+      if (rej && (rej.transactions.length || rej.categories.length || rej.settings.length)) {
+        // The sheet already had a newer version of these rows (edited on another device): adopt theirs.
+        [].concat(rej.transactions.map(x => 'tx:' + x.id), rej.categories.map(x => 'cat:' + x.id), rej.settings.map(x => 'set:' + x.key))
+          .forEach(k => { if (meta.known[k]) meta.known[k].u = 0; });
+        if (applyServerRows({transactions: rej.transactions, categories: rej.categories, settings: rej.settings})) { saveToLocalStorage(); renderSoon(); }
+      }
+      saveMeta();
+    }
+    return true;
+  } finally { flushing = false; }
+}
+
+function nowLabel() { return new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}); }
+function renderSoon() {
+  const a = document.activeElement;
+  if (a && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName) && !(a.closest && a.closest('#settingsPanel'))) { setTimeout(renderSoon, 3000); return; }
+  render();
+}
+
+async function syncCycle() {
+  if (!meta.synced || syncing || !getApiUrl()) return;
+  syncing = true;
+  try {
+    if (!(await flush())) return;
+    const r = await pullRows(meta.cursor);
+    if (!r.ok) { setStatus(r.msg, false); return; }
+    const changed = applyServerRows(r.data);
+    meta.cursor = Math.max(meta.cursor, Number(r.data.cursor) || 0);
+    saveMeta();
+    if (changed) { saveToLocalStorage(); renderSoon(); }
+    setStatus('Connected — synced ' + nowLabel(), true);
+  } finally { syncing = false; }
+}
+
 function persist() {
   saveToLocalStorage();
-  dirty = true;
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(saveToCloud, 150);
+  if (!meta.synced || !getApiUrl()) return;
+  queueChanges();
+  saveMeta();
+  if (pendingCount() > 0) setStatus('Saving…', true);
+  clearTimeout(flushTimer);
+  flushTimer = setTimeout(() => { flush().then(ok => { if (ok) setStatus('Connected — saved ' + nowLabel(), true); }); }, 150);
 }
+
 function saveBeacon() {
-  const url = getApiUrl();
-  if (!url || !dirty) return;
+  if (!meta.synced || !getApiUrl()) return;
   try {
-    const blob = new Blob([JSON.stringify(state)], {type: 'text/plain;charset=utf-8'});
-    navigator.sendBeacon(url + '?token=' + encodeURIComponent(getApiToken()), blob);
+    queueChanges(); saveMeta();
+    if (!pendingCount()) return;
+    const payload = {v: 2, tx: [], cats: [], settings: []};
+    Object.keys(meta.pending).forEach(k => {
+      const row = Object.assign({}, meta.pending[k]); const t = row.t; delete row.t;
+      (t === 'tx' ? payload.tx : t === 'cat' ? payload.cats : payload.settings).push(row);
+    });
+    const blob = new Blob([JSON.stringify(payload)], {type: 'text/plain;charset=utf-8'});
+    navigator.sendBeacon(getApiUrl() + '?token=' + encodeURIComponent(getApiToken()) + '&action=push', blob);
   } catch (e) {}
 }
 window.addEventListener('pagehide', saveBeacon);
 window.addEventListener('beforeunload', e => {
-  if (dirty) { saveBeacon(); e.preventDefault(); e.returnValue = ''; }
+  if (hasUnsaved()) { saveBeacon(); e.preventDefault(); e.returnValue = ''; }
 });
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveBeacon(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') saveBeacon(); else syncCycle();
+});
+window.addEventListener('focus', () => syncCycle());
+setInterval(() => { if (document.visibilityState !== 'hidden') syncCycle(); }, 20000);
+
+/* ---- first connection / one-time migration ---- */
+function countTx(s) { return (s.checkingEntries || []).length + (s.ccEntries || []).length; }
+
+async function startSync() {
+  const banner = document.getElementById('migrateBanner');
+  banner.style.display = 'none';
+  if (!getApiUrl()) { setStatus('Not connected', false); document.getElementById('setupBanner').style.display = 'block'; return; }
+  document.getElementById('setupBanner').style.display = 'none';
+  loadMeta();
+  setStatus('Connecting…', false);
+  if (meta.synced) { await syncCycle(); return; }
+
+  const r = await pullRows(0);
+  if (!r.ok) { setStatus(r.msg, false); return; }
+  const d = r.data;
+  if (d.transactions.length || d.categories.length || d.settings.length) {
+    // The sheet already holds data in the new format: adopt it on this device.
+    try { localStorage.setItem('budgetStateCacheBeforeSync', JSON.stringify(state)); } catch (e) {}
+    state.categories = []; state.checkingEntries = []; state.ccEntries = [];
+    meta.known = {}; meta.pending = {};
+    applyServerRows(d);
+    meta.cursor = Number(d.cursor) || 0; meta.synced = true;
+    saveMeta(); saveToLocalStorage(); render();
+    setStatus('Connected — synced ' + nowLabel(), true);
+    return;
+  }
+  // Sheet is empty (new format). Look for data to migrate.
+  const cands = [];
+  const lg = await api('legacy');
+  if (lg.ok && lg.data && (lg.data.checkingEntries || lg.data.ccEntries || lg.data.categories)) {
+    const s = migrate(lg.data);
+    if (countTx(s) > 0 || (s.categories || []).length > 0) cands.push({label: 'the data in your Google Sheet (old format)', source: lg.data, tx: countTx(s), cats: s.categories.length});
+  }
+  if (countTx(state) > 0) cands.push({label: 'the data saved on this device', source: JSON.parse(JSON.stringify(state)), tx: countTx(state), cats: state.categories.length});
+  if (!cands.length) { await runMigration(state, true); return; }
+  showMigration(cands);
+}
+
+function showMigration(cands) {
+  const box = document.getElementById('migrateBanner');
+  box.innerHTML = '<div style="margin-bottom:8px"><strong>One-time upgrade.</strong> Your sheet is switching to the new, safer row-by-row format. Your old data is not deleted. Pick where to copy your data from (if unsure, download a backup first with “Export backup”):</div>';
+  cands.forEach(c => {
+    const b = document.createElement('button');
+    b.className = 'primary'; b.style.marginRight = '8px';
+    b.textContent = 'Use ' + c.label + ' — ' + c.tx + ' transactions, ' + c.cats + ' categories';
+    b.addEventListener('click', () => { b.disabled = true; runMigration(c.source, false); });
+    box.appendChild(b);
+  });
+  box.style.display = 'block';
+  setStatus('Waiting for the one-time upgrade — see the message below', false);
+}
+
+async function runMigration(source, silent) {
+  const keepView = {dashboardMonth: state.dashboardMonth, budgetMonth: state.budgetMonth};
+  state = Object.assign(migrate(source), keepView);
+  meta.known = {}; meta.pending = {}; meta.cursor = 0; meta.synced = true;
+  queueChanges(); saveMeta(); saveToLocalStorage();
+  document.getElementById('migrateBanner').style.display = 'none';
+  render();
+  const ok = await flush();
+  if (ok) { await syncCycle(); if (!silent) alert('Done. Your data is now stored row by row in the sheet (' + countTx(state) + ' transactions). Open the app on your other devices and refresh them.'); }
+  else if (!silent) alert('The upgrade could not finish: ' + document.getElementById('statusText').textContent + '. Nothing is lost — your data stays on this device and will keep retrying.');
+}
 
 document.getElementById('btnSettings').addEventListener('click', () => {
   const panel = document.getElementById('settingsPanel');
@@ -492,10 +805,9 @@ document.getElementById('saveSettingsBtn').addEventListener('click', async () =>
   const token = document.getElementById('apiTokenInput').value.trim();
   try { localStorage.setItem('apiUrl', url); localStorage.setItem('apiToken', token); } catch(e) {}
   document.getElementById('settingsPanel').style.display = 'none';
-  const cloudData = await loadFromCloud();
-  if (cloudData) { state = migrate(cloudData); render(); }
-  document.getElementById('setupBanner').style.display = getApiUrl() ? 'none' : 'block';
+  await startSync();
 });
+// <SYNC-END>
 document.getElementById('btnExport').addEventListener('click', () => {
   const blob = new Blob([JSON.stringify(state)], {type: 'application/json'});
   const url = URL.createObjectURL(blob);
@@ -509,15 +821,22 @@ document.getElementById('backupFileInput').addEventListener('change', async e =>
   let parsed;
   try { parsed = JSON.parse(text); }
   catch (err) { alert('That file could not be read as a budget backup.'); e.target.value = ''; return; }
-  const overwrite = confirm(
-    'This will replace all current data (in this browser and on the shared sheet, if connected) with the contents of "' + file.name + '". This cannot be undone. Continue?'
-  );
-  if (!overwrite) { e.target.value = ''; return; }
+  if (getApiUrl() && !meta.synced) { alert('Finish connecting to the sheet first (see the message at the top), then import the backup.'); e.target.value = ''; return; }
+  const n = countTx(migrate(parsed));
+  if (!confirm('This replaces everything with the contents of "' + file.name + '" (' + n + ' transactions), for you and your wife. Transactions that are not in the file will be removed. Continue?')) { e.target.value = ''; return; }
+  if (getApiUrl()) await syncCycle();
   state = migrate(parsed);
   saveToLocalStorage();
-  await saveToCloud();
-  render();
-  alert('Backup restored' + (getApiUrl() ? ' and pushed to your shared sheet.' : ' locally. Connect to your shared sheet in Settings to sync it.'));
+  if (getApiUrl()) {
+    persist();
+    clearTimeout(flushTimer);
+    const ok = await flush();
+    render();
+    alert(ok ? 'Backup restored and confirmed saved to your shared sheet.' : 'Backup loaded on this device, but sending it to the sheet FAILED (' + document.getElementById('statusText').textContent + '). It stays queued and will retry.');
+  } else {
+    render();
+    alert('Backup restored locally. Connect to your shared sheet in Settings to sync it.');
+  }
   e.target.value = '';
 });
 
@@ -556,8 +875,11 @@ document.getElementById('addCatBtn').addEventListener('click', () => {
   const isIncomeInput = document.getElementById('newCatIncome');
   const isFixedInput = document.getElementById('newCatFixed');
   const name = nameInput.value.trim(); if (!name) return;
-  state.categories.push({id: uid(), name, isIncome: isIncomeInput.checked, isFixed: isFixedInput.checked, monthly: newMonthlyArray()});
-  nameInput.value = ''; isIncomeInput.checked = false; isFixedInput.checked = false;
+  const isTransferInput = document.getElementById('newCatTransfer');
+  const newCat = {id: uid(), name, isIncome: isIncomeInput.checked && !isTransferInput.checked, isFixed: isFixedInput.checked, monthly: newMonthlyArray()};
+  state.categories.push(newCat);
+  if (isTransferInput.checked) setTransferCat(newCat.id, true);
+  nameInput.value = ''; isIncomeInput.checked = false; isFixedInput.checked = false; isTransferInput.checked = false;
   commit();
 });
 
@@ -603,6 +925,86 @@ function previousCategoryForVendor(kind, vendor) {
   return '';
 }
 
+// Order: same description used before -> your keyword rules -> built-in card-payment/transfer detection.
+function ruleCategoryFor(vendor) {
+  const v = (vendor || '').toLowerCase();
+  if (!v) return '';
+  for (const r of (state.catRules || [])) {
+    if (r.keyword && r.categoryId && v.indexOf(r.keyword.toLowerCase()) !== -1 && state.categories.some(c => c.id === r.categoryId)) return r.categoryId;
+  }
+  return '';
+}
+function suggestCategory(kind, vendor) {
+  const prev = previousCategoryForVendor(kind, vendor);
+  if (prev) return prev;
+  const byRule = ruleCategoryFor(vendor);
+  if (byRule) return byRule;
+  return looksLikeTransfer(vendor) ? firstTransferCategoryId() : '';
+}
+function addRule(keyword, categoryId) {
+  keyword = (keyword || '').trim();
+  if (!keyword || !categoryId) return false;
+  const ex = state.catRules.find(r => r.keyword.toLowerCase() === keyword.toLowerCase());
+  if (ex) ex.categoryId = categoryId; else state.catRules.push({id: uid(), keyword, categoryId});
+  return true;
+}
+
+function normVendor(v) { return (v || '').toLowerCase().replace(/\s+/g, ' ').trim(); }
+function dayDiff(a, b) {
+  const p = x => { const [y, m, d] = x.split('-').map(Number); return Date.UTC(y, m - 1, d); };
+  return Math.round((p(a) - p(b)) / 86400000);
+}
+const NEAR_DAYS = 2;
+// Marks imported rows that are probably already in the register. Matching is count-aware: each
+// existing entry can explain at most one imported row, so genuinely repeated purchases still import.
+//   exact: same date, amount and description        -> unchecked
+//   near:  same amount and description, 1-2 days off (card posting dates drift) -> unchecked
+//   maybe: same date and amount, different description (you edited it)          -> left checked
+function markDuplicates(kind, rows) {
+  const list = kind === 'checking' ? state.checkingEntries : state.ccEntries;
+  const amt = x => (Math.round(Number(x) * 100) / 100).toFixed(2);
+  const remaining = list.map(e => ({date: e.date, a: amt(e.amount), v: normVendor(e.vendor)}));
+  const take = (r, test) => {
+    const i = remaining.findIndex(test);
+    if (i === -1) return null;
+    return remaining.splice(i, 1)[0];
+  };
+  rows.forEach(r => { r.dup = ''; r.dupInfo = ''; r._a = amt(r.amount); r._v = normVendor(r.vendor); });
+  rows.forEach(r => { if (take(r, e => e.date === r.date && e.a === r._a && e.v === r._v)) { r.dup = 'exact'; r.dupInfo = 'Already in your register with this date, amount and description.'; } });
+  rows.forEach(r => {
+    if (r.dup) return;
+    let best = -1, bestD = 99;
+    remaining.forEach((e, i) => { const d = Math.abs(dayDiff(r.date, e.date)); if (e.a === r._a && e.v === r._v && d >= 1 && d <= NEAR_DAYS && d < bestD) { best = i; bestD = d; } });
+    if (best !== -1) { const e = remaining.splice(best, 1)[0]; r.dup = 'near'; r.dupInfo = 'Same description and amount already in your register dated ' + e.date + ' (' + bestD + ' day' + (bestD === 1 ? '' : 's') + ' apart).'; r.nearDays = bestD; }
+  });
+  rows.forEach(r => { if (!r.dup && take(r, e => e.date === r.date && e.a === r._a)) { r.dup = 'maybe'; r.dupInfo = 'Same date and amount as an existing entry with a different description.'; } });
+  rows.forEach(r => { if (r.dup === 'exact' || r.dup === 'near') r.include = false; });
+  return rows;
+}
+
+// Entries in a register that look like the same purchase entered twice with dates 1-2 days apart.
+function findNearTwins(entries) {
+  const okSet = new Set(state.dupOkIds || []);
+  const groups = {};
+  entries.forEach(e => {
+    const k = normVendor(e.vendor) + '|' + (Math.round(Number(e.amount) * 100) / 100).toFixed(2);
+    (groups[k] = groups[k] || []).push(e);
+  });
+  const twins = {};
+  Object.keys(groups).forEach(k => {
+    const g = groups[k];
+    if (g.length < 2 || !k.split('|')[0]) return;
+    for (let i = 0; i < g.length; i++) for (let j = i + 1; j < g.length; j++) {
+      const d = Math.abs(dayDiff(g[i].date, g[j].date));
+      if (d >= 1 && d <= NEAR_DAYS && !okSet.has(g[i].id) && !okSet.has(g[j].id)) {
+        (twins[g[i].id] = twins[g[i].id] || []).push(g[j]);
+        (twins[g[j].id] = twins[g[j].id] || []).push(g[i]);
+      }
+    }
+  });
+  return twins;
+}
+
 function parseChecking(rows) {
   const staged = [];
   rows.forEach(r => {
@@ -611,7 +1013,7 @@ function parseChecking(rows) {
     const amount = (credit && credit.trim()) ? parseMoneyCell(credit) : -parseMoneyCell(debit);
     if (isNaN(amount)) return;
     const vendor = cleanChequingDescription(desc);
-    staged.push({rowId: uid(), date: date.trim(), vendor, amount, categoryId: previousCategoryForVendor('checking', vendor), include: true});
+    staged.push({rowId: uid(), date: date.trim(), vendor, amount, categoryId: suggestCategory('checking', vendor), include: true});
   });
   return staged;
 }
@@ -623,7 +1025,7 @@ function parseCreditCard(rows) {
     const amount = (debit && debit.trim()) ? parseMoneyCell(debit) : -parseMoneyCell(credit);
     if (isNaN(amount)) return;
     const vendor = (desc||'').trim();
-    staged.push({rowId: uid(), date: date.trim(), vendor, amount, categoryId: previousCategoryForVendor('cc', vendor), include: true});
+    staged.push({rowId: uid(), date: date.trim(), vendor, amount, categoryId: suggestCategory('cc', vendor), include: true});
   });
   return staged;
 }
@@ -650,10 +1052,18 @@ document.getElementById('ccCsvInput').addEventListener('change', async e => {
 let importPreview = null; // {kind, rows}
 
 function openImportPreview(kind, rows) {
+  markDuplicates(kind, rows);
   importPreview = {kind, rows};
   const suggestedCount = rows.filter(r => r.categoryId).length;
-  document.getElementById('importPreviewSummary').textContent =
-    `${rows.length} transaction${rows.length===1?'':'s'} found — ${suggestedCount} pre-filled from past categorizations. Uncheck any you don't want to import.`;
+  const exactN = rows.filter(r => r.dup === 'exact').length, nearN = rows.filter(r => r.dup === 'near').length, maybeN = rows.filter(r => r.dup === 'maybe').length;
+  const transferN = rows.filter(r => looksLikeTransfer(r.vendor) && !isTransferCat(r.categoryId)).length;
+  let msg = `${rows.length} transaction${rows.length===1?'':'s'} found — ${suggestedCount} pre-filled from past categorizations.`;
+  if (exactN) msg += ` ${exactN} already in your register (unchecked, marked Duplicate).`;
+  if (nearN) msg += ` ${nearN} match an existing entry 1–2 days apart (unchecked, marked Same?) — usually a card posting date that shifted; re-check any that are really new.`;
+  if (maybeN) msg += ` ${maybeN} may be duplicates with an edited description (left checked, marked Check).`;
+  if (transferN && !state.transferCategoryIds.length) msg += ` ${transferN} look like card payments or transfers — add a category with “Transfer” ticked (Budget tab) so they stay out of your totals.`;
+  else if (transferN) msg += ` ${transferN} look like card payments or transfers — set their category to your Transfer category.`;
+  document.getElementById('importPreviewSummary').textContent = msg + ' Uncheck any you don\'t want to import.';
   renderImportPreviewRows();
   document.getElementById('importPreviewOverlay').style.display = 'flex';
 }
@@ -665,15 +1075,27 @@ function renderImportPreviewRows() {
     <tr data-row-id="${r.rowId}">
       <td style="text-align:center"><input type="checkbox" class="previewInclude" ${r.include?'checked':''}></td>
       <td>${r.date}</td>
-      <td title="${escapeHtml(r.vendor)}">${escapeHtml(r.vendor)}</td>
+      <td title="${escapeHtml(r.vendor)}">${escapeHtml(r.vendor)}${r.dup==='exact'?' <span title="'+escapeHtml(r.dupInfo)+'" style="font-size:10px;font-weight:700;color:var(--red)">DUPLICATE</span>':r.dup==='near'?' <span title="'+escapeHtml(r.dupInfo)+'" style="font-size:10px;font-weight:700;color:var(--red)">SAME? ±'+r.nearDays+'d</span>':r.dup==='maybe'?' <span style="font-size:10px;font-weight:700;color:#B7791F">CHECK</span>':''}</td>
       <td class="num ${r.amount<0?'neg':'pos'}">${fmtAmt(r.amount)}</td>
-      <td><select class="previewCategory">${categoryOptionsHtml(r.categoryId)}</select></td>
+      <td><select class="previewCategory">${categoryOptionsHtml(r.categoryId)}</select> <span class="rule-link" title="Always use this category when the description contains a keyword you choose">+ rule</span></td>
     </tr>`).join('');
   tbody.querySelectorAll('tr').forEach(tr => {
     const rowId = tr.dataset.rowId;
     const row = importPreview.rows.find(x => x.rowId === rowId);
     tr.querySelector('.previewInclude').addEventListener('change', e => { row.include = e.target.checked; tr.style.opacity = e.target.checked ? '1' : '0.4'; });
     tr.querySelector('.previewCategory').addEventListener('change', e => { row.categoryId = e.target.value; });
+    tr.querySelector('.rule-link').addEventListener('click', () => {
+      if (!row.categoryId) { alert('Pick a category for this row first, then click “+ rule”.'); return; }
+      const cat = state.categories.find(c => c.id === row.categoryId);
+      const kw = prompt('Whenever a description contains this text, use “' + (cat ? cat.name : '') + '”.\nEdit the keyword if you want it broader (e.g. COSTCO):', row.vendor);
+      if (!kw || !kw.trim()) return;
+      addRule(kw, row.categoryId);
+      let n = 0;
+      importPreview.rows.forEach(x => { if (!x.categoryId && x.vendor.toLowerCase().indexOf(kw.trim().toLowerCase()) !== -1) { x.categoryId = row.categoryId; n++; } });
+      persist();
+      renderImportPreviewRows();
+      if (n) { /* rows above were filled in */ }
+    });
     if (!row.include) tr.style.opacity = '0.4';
   });
 }
@@ -683,6 +1105,10 @@ document.getElementById('importPreviewSelectAllBtn').addEventListener('click', (
 });
 document.getElementById('importPreviewNoneBtn').addEventListener('click', () => {
   importPreview.rows.forEach(r => r.include = false);
+  renderImportPreviewRows();
+});
+document.getElementById('importPreviewNewBtn').addEventListener('click', () => {
+  importPreview.rows.forEach(r => r.include = !r.dup);
   renderImportPreviewRows();
 });
 document.getElementById('importPreviewCancelBtn').addEventListener('click', closeImportPreview);
@@ -698,6 +1124,16 @@ document.getElementById('importPreviewConfirmBtn').addEventListener('click', () 
   commit();
   closeImportPreview();
 });
+
+function isTransferCat(id) { return !!id && (state.transferCategoryIds || []).indexOf(id) !== -1; }
+function setTransferCat(id, on) {
+  const set = new Set(state.transferCategoryIds || []);
+  if (on) set.add(id); else set.delete(id);
+  state.transferCategoryIds = Array.from(set);
+}
+const TRANSFER_RE = /(credit card|\bcc\b|visa|mastercard|master card|amex).*(payment|pmt|pymt)|payment.*(thank|received)|^payment\b|^transfer\b|transfer (to|from) (savings|chequing|checking|investment|tfsa|rrsp)|(savings|chequing|checking).*transfer/i;
+function looksLikeTransfer(v) { return TRANSFER_RE.test((v || '').trim()); }
+function firstTransferCategoryId() { const c = state.categories.find(c => isTransferCat(c.id)); return c ? c.id : ''; }
 
 function entryContributions(e) {
   if (e.splits && e.splits.length) {
@@ -771,6 +1207,7 @@ function computeDashboard() {
   const mIdx = monthIdxFromYm(ym);
   let incomeActual = 0, budgetedIncome = 0, budgetedExpense = 0, spentExpense = 0;
   state.categories.forEach(c => {
+    if (isTransferCat(c.id)) return;
     if (c.isIncome) { incomeActual += categoryActualForMonth(c.id, ym, true); budgetedIncome += Number(c.monthly[mIdx])||0; }
     else { budgetedExpense += Number(c.monthly[mIdx])||0; spentExpense += categorySpentForMonth(c.id, ym); }
   });
@@ -803,7 +1240,7 @@ function monthLabel(ym) {
 
 function buildReport(ym) {
   const mIdx = monthIdxFromYm(ym);
-  const expenseCats = state.categories.filter(c => !c.isIncome);
+  const expenseCats = state.categories.filter(c => !c.isIncome && !isTransferCat(c.id));
   const fixedCats = expenseCats.filter(c => c.isFixed);
   const variableCats = expenseCats.filter(c => !c.isFixed);
 
@@ -822,8 +1259,9 @@ function buildReport(ym) {
   if (isCurrentMonth) {
     const today = todayStr();
     const todaysTxns = [];
-    state.checkingEntries.forEach(e => { if (e.date === today && e.amount < 0) { spentToday += -e.amount; todaysTxns.push(e); } });
-    state.ccEntries.forEach(e => { if (e.date === today && e.amount > 0) { spentToday += e.amount; todaysTxns.push(e); } });
+    const nonTransfer = e => entryContributions(e).some(c => !isTransferCat(c.categoryId));
+    state.checkingEntries.forEach(e => { if (e.date === today && e.amount < 0 && nonTransfer(e)) { spentToday += -e.amount; todaysTxns.push(e); } });
+    state.ccEntries.forEach(e => { if (e.date === today && e.amount > 0 && nonTransfer(e)) { spentToday += e.amount; todaysTxns.push(e); } });
     if (todaysTxns.length) {
       const last = todaysTxns[todaysTxns.length - 1];
       const cat = state.categories.find(c => c.id === last.categoryId);
@@ -1069,6 +1507,7 @@ function renderBudgetMonth() {
   const mIdx = monthIdxFromYm(ym);
   let budgetedIncome = 0, budgetedExpense = 0;
   state.categories.forEach(c => {
+    if (isTransferCat(c.id)) return;
     const v = Number(c.monthly[mIdx]) || 0;
     if (c.isIncome) budgetedIncome += v; else budgetedExpense += v;
   });
@@ -1087,6 +1526,7 @@ function renderBudgetMonth() {
     return `<tr>
       <td class="checkbox-cell"><input type="checkbox" class="catIncome" data-id="${cat.id}" ${cat.isIncome?'checked':''}></td>
       <td class="checkbox-cell"><input type="checkbox" class="catFixed" data-id="${cat.id}" ${cat.isFixed?'checked':''}></td>
+      <td class="checkbox-cell"><input type="checkbox" class="catTransfer" data-id="${cat.id}" ${isTransferCat(cat.id)?'checked':''}></td>
       <td><input type="text" class="cell-input catName" data-id="${cat.id}" value="${escapeHtml(cat.name)}"></td>
       <td class="num"><input type="text" inputmode="decimal" class="cell-input num catMonthBudget" data-id="${cat.id}" data-m="${mIdx}" value="${budgeted ? fmtAmt(budgeted) : ''}"></td>
       <td class="num">${money(actual)}</td>
@@ -1100,7 +1540,7 @@ function renderBudgetMonth() {
 
 function renderBudgetYear() {
   const head = document.getElementById('budgetYearHead');
-  head.innerHTML = '<th>Income?</th><th>Fixed?</th><th>Category</th>' +
+  head.innerHTML = '<th>Income?</th><th>Fixed?</th><th title="Transfers and card payments: left out of all totals">Transfer?</th><th>Category</th>' +
     MONTH_NAMES.map((m, i) => `<th class="num">${m}${i < 11 ? `<div class="fillRight" data-allrows="1" data-m="${i}" title="Copy every category's ${m} amount to ${MONTH_NAMES[i+1]}–Dec">→ all rest</div>` : ''}</th>`).join('') +
     '<th class="num">Balance (year)</th><th></th>';
   document.getElementById('budgetYearRows').innerHTML = state.categories.map(cat => {
@@ -1111,15 +1551,16 @@ function renderBudgetYear() {
     return `<tr>
       <td class="checkbox-cell"><input type="checkbox" class="catIncome" data-id="${cat.id}" ${cat.isIncome?'checked':''}></td>
       <td class="checkbox-cell"><input type="checkbox" class="catFixed" data-id="${cat.id}" ${cat.isFixed?'checked':''}></td>
+      <td class="checkbox-cell"><input type="checkbox" class="catTransfer" data-id="${cat.id}" ${isTransferCat(cat.id)?'checked':''}></td>
       <td><input type="text" class="cell-input catName" data-id="${cat.id}" value="${escapeHtml(cat.name)}" style="min-width:110px"></td>
       ${monthCells}
       <td class="num yeartotal">${money(categoryYearTotal(cat))}</td>
       <td><button class="ghost delCat" data-id="${cat.id}">&times;</button></td>
     </tr>`;
   }).join('');
-  const netByMonth = MONTH_NAMES.map((_, i) => state.categories.reduce((s,c) => s + (c.isIncome ? 1 : -1) * (Number(c.monthly[i])||0), 0));
+  const netByMonth = MONTH_NAMES.map((_, i) => state.categories.reduce((s,c) => isTransferCat(c.id) ? s : s + (c.isIncome ? 1 : -1) * (Number(c.monthly[i])||0), 0));
   const netYear = netByMonth.reduce((s,v) => s+v, 0);
-  document.getElementById('budgetYearNet').innerHTML = `<td></td><td>Net balance</td>` + netByMonth.map(v => `<td class="num ${v<0?'neg':'pos'}">${money(v)}</td>`).join('') + `<td class="num ${netYear<0?'neg':'pos'}">${money(netYear)}</td><td></td>`;
+  document.getElementById('budgetYearNet').innerHTML = `<td></td><td></td><td>Net balance</td>` + netByMonth.map(v => `<td class="num ${v<0?'neg':'pos'}">${money(v)}</td>`).join('') + `<td class="num ${netYear<0?'neg':'pos'}">${money(netYear)}</td><td></td>`;
   document.querySelectorAll('.fillRight[data-allrows]').forEach(btn => {
     btn.addEventListener('click', e => {
       const m = parseInt(e.target.dataset.m, 10);
@@ -1178,10 +1619,14 @@ function wireBudgetRowEvents() {
       commit();
     });
   });
+  document.querySelectorAll('.catTransfer').forEach(inp => {
+    inp.addEventListener('change', e => { setTransferCat(e.target.dataset.id, e.target.checked); commit(); });
+  });
   document.querySelectorAll('.delCat').forEach(btn => {
     btn.addEventListener('click', e => {
       const id = e.target.dataset.id;
       state.categories = state.categories.filter(c => c.id !== id);
+      setTransferCat(id, false);
       state.checkingEntries.forEach(x => { if (x.categoryId === id) x.categoryId = ''; });
       state.ccEntries.forEach(x => { if (x.categoryId === id) x.categoryId = ''; });
       commit();
@@ -1207,6 +1652,7 @@ function renderRegister(kind) {
     return true;
   });
   const displayList = filtered.slice().reverse().concat([startRow]);
+  const twins = findNearTwins(entries);
   const tbody = document.getElementById(isChecking ? 'checkingRows' : 'ccRows');
   tbody.innerHTML = displayList.map(e => {
     if (e.isStarting) {
@@ -1227,7 +1673,7 @@ function renderRegister(kind) {
          <div class="split-link" data-id="${e.id}" data-list="${isChecking?'checkingEntries':'ccEntries'}">Split</div>`;
     return `<tr data-list="${isChecking?'checkingEntries':'ccEntries'}" data-id="${e.id}">
       <td><input type="date" class="cell-input entryDate" value="${e.date}"></td>
-      <td><input type="text" class="cell-input entryVendor" value="${escapeHtml(e.vendor)}" title="${escapeHtml(e.vendor)}"></td>
+      <td><input type="text" class="cell-input entryVendor" value="${escapeHtml(e.vendor)}" title="${escapeHtml(e.vendor)}">${twins[e.id] ? `<div class="dup-flag" data-id="${e.id}" title="Same description and amount on ${twins[e.id].map(t => t.date).join(', ')}. Click if these are two real purchases.">⚠ Possible duplicate (${twins[e.id].map(t => t.date).join(', ')}) — click if not</div>` : ''}</td>
       <td>${categoryCellHtml}</td>
       <td class="num"><input type="text" inputmode="decimal" class="cell-input num entryAmount ${e.amount<0?'neg':'pos'}" value="${fmtAmt(e.amount)}"></td>
       <td class="num">${money(e.balance)}</td>
@@ -1246,6 +1692,13 @@ function renderRegister(kind) {
     amtInput.addEventListener('focus', e => { e.target.value = entry.amount || ''; });
     amtInput.addEventListener('blur', e => { entry.amount = parseAmt(e.target.value); commit(); });
     tr.querySelector('.delEntry').addEventListener('click', () => { state[list] = state[list].filter(x => x.id !== id); commit(); });
+    const dupFlag = tr.querySelector('.dup-flag');
+    if (dupFlag) dupFlag.addEventListener('click', () => {
+      const set = new Set(state.dupOkIds || []);
+      set.add(id); (twins[id] || []).forEach(t => set.add(t.id));
+      state.dupOkIds = Array.from(set);
+      commit();
+    });
     const splitTrigger = tr.querySelector('.split-badge, .split-link');
     if (splitTrigger) splitTrigger.addEventListener('click', () => openSplitModal(list, id));
   });
@@ -1266,14 +1719,22 @@ function renderRegister(kind) {
   });
 }
 
-let modalKind = null;
+let modalKind = null, modalCatTouched = false;
 function openTxnModal(kind) {
-  modalKind = kind;
+  modalKind = kind; modalCatTouched = false;
   document.getElementById('txnModalTitle').textContent = 'Add ' + (kind === 'checking' ? 'checking' : 'credit card') + ' transaction';
   document.getElementById('modalDate').value = todayStr();
   document.getElementById('modalDesc').value = '';
   document.getElementById('modalCat').innerHTML = categoryOptionsHtml();
   document.getElementById('modalAmt').value = '';
+  document.getElementById('modalAddedMsg').textContent = '';
+  // recent descriptions, newest first, for autocomplete
+  const seen = new Set(), recent = [];
+  state.checkingEntries.concat(state.ccEntries).slice().sort((a, b) => a.date < b.date ? 1 : a.date > b.date ? -1 : 0).forEach(e => {
+    const v = (e.vendor || '').trim(), k = v.toLowerCase();
+    if (v && !seen.has(k) && recent.length < 300) { seen.add(k); recent.push(v); }
+  });
+  document.getElementById('vendorList').innerHTML = recent.map(v => '<option value="' + escapeHtml(v) + '"></option>').join('');
   const typeGroup = document.getElementById('modalTypeGroup');
   const options = kind === 'checking'
     ? [{value:'expense', label:'Expense'}, {value:'income', label:'Income'}]
@@ -1288,7 +1749,15 @@ function openTxnModal(kind) {
 function closeTxnModal() { document.getElementById('txnModalOverlay').style.display = 'none'; modalKind = null; }
 document.getElementById('modalCancelBtn').addEventListener('click', closeTxnModal);
 document.getElementById('txnModalOverlay').addEventListener('click', e => { if (e.target.id === 'txnModalOverlay') closeTxnModal(); });
-document.getElementById('modalAddBtn').addEventListener('click', () => {
+document.getElementById('modalCat').addEventListener('change', () => { modalCatTouched = true; });
+document.getElementById('modalDesc').addEventListener('input', e => {
+  if (modalCatTouched || !modalKind) return;
+  const v = e.target.value.trim();
+  const sel = document.getElementById('modalCat');
+  const cat = v ? suggestCategory(modalKind, v) : '';
+  sel.value = cat || '';
+});
+function addModalEntry(keepOpen) {
   if (!modalKind) return;
   const date = document.getElementById('modalDate').value || todayStr();
   const vendor = document.getElementById('modalDesc').value.trim();
@@ -1305,24 +1774,192 @@ document.getElementById('modalAddBtn').addEventListener('click', () => {
   const entry = {id: uid(), date, vendor, categoryId, amount};
   if (modalKind === 'checking') state.checkingEntries.push(entry); else state.ccEntries.push(entry);
   commit();
-  closeTxnModal();
-});
+  if (keepOpen) {
+    document.getElementById('modalAddedMsg').textContent = '✓ Added ' + (vendor || 'transaction') + ' (' + fmtAmt(amount) + ')';
+    document.getElementById('modalDesc').value = '';
+    document.getElementById('modalAmt').value = '';
+    document.getElementById('modalCat').value = '';
+    modalCatTouched = false;
+    document.getElementById('modalDesc').focus();
+  } else closeTxnModal();
+}
+document.getElementById('modalAddBtn').addEventListener('click', () => addModalEntry(false));
+document.getElementById('modalAddMoreBtn').addEventListener('click', () => addModalEntry(true));
 document.getElementById('addCheckingBtn').addEventListener('click', () => openTxnModal('checking'));
 document.getElementById('addCcBtn').addEventListener('click', () => openTxnModal('cc'));
+
+/* ---------------- Paste transactions ---------------- */
+const MONTH_ABBR = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+function ymd(y, m, d) {
+  if (m < 1 || m > 12 || d < 1 || d > 31) return null;
+  return y + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+}
+function withYear(m, d) {
+  const now = new Date(); let y = now.getFullYear();
+  const cand = new Date(y, m - 1, d);
+  if (cand.getTime() > now.getTime() + 7 * 86400000) y -= 1;
+  return ymd(y, m, d);
+}
+function parseLooseDate(str) {
+  const t = (str || '').trim().replace(/\s+/g, ' ');
+  if (!t) return null;
+  let m = t.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})$/); if (m) return ymd(+m[1], +m[2], +m[3]);
+  m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); if (m) return ymd(+m[3], +m[1], +m[2]); // month/day/year
+  m = t.match(/^([A-Za-z]{3,9})\.? (\d{1,2})(?:st|nd|rd|th)?,? ?(\d{4})?$/);
+  if (m) { const mi = MONTH_ABBR.indexOf(m[1].slice(0, 3).toLowerCase()); if (mi >= 0) return m[3] ? ymd(+m[3], mi + 1, +m[2]) : withYear(mi + 1, +m[2]); }
+  m = t.match(/^(\d{1,2}) ([A-Za-z]{3,9})\.?,? ?(\d{4})?$/);
+  if (m) { const mi = MONTH_ABBR.indexOf(m[2].slice(0, 3).toLowerCase()); if (mi >= 0) return m[3] ? ymd(+m[3], mi + 1, +m[1]) : withYear(mi + 1, +m[1]); }
+  return null;
+}
+// Returns a signed number for cells that look like money (need a $ or a decimal point), else null.
+function parseMoneyLoose(cell) {
+  const c = (cell || '').trim();
+  if (!c || !/\d/.test(c)) return null;
+  if (!/^[\s\-+()$]*[\d,]*\.?\d+\s*(CR|DR)?\s*[\-)]?$/i.test(c)) return null;
+  if (c.indexOf('$') === -1 && c.indexOf('.') === -1) return null;
+  const num = parseFloat(c.replace(/[^0-9.]/g, ''));
+  if (isNaN(num)) return null;
+  const neg = /^\s*[-(]|-\s*$|\)\s*$|DR\s*$/i.test(c) || /^\s*\$?\s*-/.test(c);
+  return neg ? -num : num;
+}
+function pasteToStandardRows(text, posMeansIn) {
+  let grid;
+  if (text.indexOf('\t') !== -1) grid = text.split(/\r?\n/).map(l => l.split('\t'));
+  else {
+    grid = parseCSV(text);
+    if (grid.every(r => r.length <= 1)) grid = text.split(/\r?\n/).map(l => l.trim().split(/\s{2,}/));
+  }
+  grid = grid.map(r => r.map(c => (c || '').trim())).filter(r => r.some(c => c));
+  const rows = []; let skipped = 0, headerIdx = null;
+  const first = grid[0] || [];
+  const idx = re => first.findIndex(c => re.test(c));
+  const di = idx(/^date/i), dei = idx(/desc|detail|merchant|payee|name|memo/i), dbi = idx(/debit|withdraw|money out|charge/i), cri = idx(/credit|deposit|money in|payment/i);
+  if (di >= 0 && dei >= 0 && dbi >= 0 && cri >= 0 && dbi !== cri) headerIdx = {di, dei, dbi, cri};
+  grid.forEach((cells, i) => {
+    if (headerIdx) {
+      if (i === 0) return;
+      const d = parseLooseDate(cells[headerIdx.di]);
+      if (!d) { skipped++; return; }
+      rows.push([d, cells[headerIdx.dei] || '', cells[headerIdx.dbi] || '', cells[headerIdx.cri] || '']);
+      return;
+    }
+    const dIdx = cells.findIndex(c => parseLooseDate(c));
+    if (dIdx === -1) { if (!/date|description|debit|credit|balance/i.test(cells.join(' '))) skipped++; return; }
+    const d = parseLooseDate(cells[dIdx]);
+    const rest = cells.filter((_, j) => j !== dIdx);
+    const money = rest.map(parseMoneyLoose).filter(v => v !== null);
+    const desc = rest.filter(c => c && parseMoneyLoose(c) === null).join(' ').trim();
+    if (money.length !== 1 || !desc) { skipped++; return; }
+    const v = money[0];
+    const isIn = posMeansIn ? v > 0 : v < 0;
+    const a = Math.abs(v).toFixed(2);
+    rows.push([d, desc, isIn ? '' : a, isIn ? a : '']);
+  });
+  return {rows, skipped};
+}
+let pasteKind = null;
+function openPaste(kind) {
+  pasteKind = kind;
+  document.getElementById('pasteTitle').textContent = 'Paste ' + (kind === 'checking' ? 'chequing' : 'credit card') + ' transactions';
+  document.getElementById('pasteSign').value = kind === 'checking' ? 'in' : 'out';
+  document.getElementById('pasteMsg').textContent = '';
+  document.getElementById('pasteText').value = '';
+  document.getElementById('pasteModalOverlay').style.display = 'flex';
+  document.getElementById('pasteText').focus();
+}
+function closePaste() { document.getElementById('pasteModalOverlay').style.display = 'none'; pasteKind = null; }
+document.getElementById('pasteCheckingBtn').addEventListener('click', () => openPaste('checking'));
+document.getElementById('pasteCcBtn').addEventListener('click', () => openPaste('cc'));
+document.getElementById('pasteCancelBtn').addEventListener('click', closePaste);
+document.getElementById('pasteModalOverlay').addEventListener('click', e => { if (e.target.id === 'pasteModalOverlay') closePaste(); });
+document.getElementById('pasteGoBtn').addEventListener('click', () => {
+  const text = document.getElementById('pasteText').value;
+  if (!text.trim()) { document.getElementById('pasteMsg').textContent = 'Paste some transactions first.'; return; }
+  const {rows, skipped} = pasteToStandardRows(text, document.getElementById('pasteSign').value === 'in');
+  const staged = pasteKind === 'checking' ? parseChecking(rows) : parseCreditCard(rows);
+  if (!staged.length) {
+    document.getElementById('pasteMsg').textContent = 'No transactions found. Each line needs a date and one amount, or include a header row like Date, Description, Debit, Credit.';
+    return;
+  }
+  const kind = pasteKind;
+  closePaste();
+  openImportPreview(kind, staged);
+  if (skipped) document.getElementById('importPreviewSummary').textContent += ' (' + skipped + ' pasted line' + (skipped === 1 ? ' was' : 's were') + ' skipped — not recognized as transactions.)';
+});
+
+/* ---------------- Category rules ---------------- */
+function renderRulesModal() {
+  const sel = document.getElementById('ruleCat');
+  const keep = sel.value;
+  sel.innerHTML = state.categories.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+  if (keep) sel.value = keep;
+  const tbody = document.getElementById('rulesRows');
+  if (!state.catRules.length) { tbody.innerHTML = '<tr><td class="hint">No rules yet. Add one above, or click “+ rule” on any row in the import review.</td></tr>'; return; }
+  tbody.innerHTML = state.catRules.map(r => `<tr data-id="${r.id}">
+    <td><input type="text" class="cell-input ruleKw" value="${escapeHtml(r.keyword)}"></td>
+    <td>→</td>
+    <td><select class="cell-input ruleCategory">${categoryOptionsHtml(r.categoryId)}</select></td>
+    <td><button class="ghost ruleDel">&times;</button></td></tr>`).join('');
+  tbody.querySelectorAll('tr[data-id]').forEach(tr => {
+    const rule = state.catRules.find(x => x.id === tr.dataset.id);
+    tr.querySelector('.ruleKw').addEventListener('change', e => { const v = e.target.value.trim(); if (v) rule.keyword = v; persist(); renderRulesModal(); });
+    tr.querySelector('.ruleCategory').addEventListener('change', e => { rule.categoryId = e.target.value; persist(); });
+    tr.querySelector('.ruleDel').addEventListener('click', () => { state.catRules = state.catRules.filter(x => x.id !== rule.id); persist(); renderRulesModal(); });
+  });
+}
+document.getElementById('rulesBtn').addEventListener('click', () => {
+  document.getElementById('rulesMsg').textContent = '';
+  renderRulesModal();
+  document.getElementById('rulesModalOverlay').style.display = 'flex';
+});
+document.getElementById('rulesCloseBtn').addEventListener('click', () => { document.getElementById('rulesModalOverlay').style.display = 'none'; render(); });
+document.getElementById('rulesModalOverlay').addEventListener('click', e => { if (e.target.id === 'rulesModalOverlay') { e.currentTarget.style.display = 'none'; render(); } });
+document.getElementById('ruleAddBtn').addEventListener('click', () => {
+  const kw = document.getElementById('ruleKeyword');
+  if (addRule(kw.value, document.getElementById('ruleCat').value)) { kw.value = ''; persist(); renderRulesModal(); }
+});
+document.getElementById('rulesApplyBtn').addEventListener('click', () => {
+  let n = 0;
+  state.checkingEntries.concat(state.ccEntries).forEach(e => {
+    if (e.categoryId || (e.splits && e.splits.length)) return;
+    const c = ruleCategoryFor(e.vendor);
+    if (c) { e.categoryId = c; n++; }
+  });
+  if (n) persist();
+  document.getElementById('rulesMsg').textContent = n ? n + ' transaction' + (n === 1 ? '' : 's') + ' categorized.' : 'Nothing uncategorized matched your rules.';
+});
+
+/* ---------------- Install as an app (PWA) ---------------- */
+(function setupInstallable() {
+  try {
+    const mk = size => {
+      const cv = document.createElement('canvas'); cv.width = cv.height = size;
+      const g = cv.getContext('2d');
+      g.fillStyle = '#2F6F63'; g.fillRect(0, 0, size, size);
+      g.fillStyle = '#FFFFFF'; g.font = 'bold ' + Math.round(size * 0.6) + 'px Georgia, serif';
+      g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('$', size / 2, size / 2 + size * 0.04);
+      return cv.toDataURL('image/png');
+    };
+    const i192 = mk(192), i512 = mk(512);
+    const touch = document.createElement('link'); touch.rel = 'apple-touch-icon'; touch.href = i192; document.head.appendChild(touch);
+    const icon = document.createElement('link'); icon.rel = 'icon'; icon.href = i192; document.head.appendChild(icon);
+    const manifest = {name: 'Household Budget', short_name: 'Budget', start_url: location.href.split('#')[0], scope: location.href.split('#')[0].replace(/[^\/]*$/, ''),
+      display: 'standalone', background_color: '#F5F6F2', theme_color: '#2F6F63',
+      icons: [{src: i192, sizes: '192x192', type: 'image/png', purpose: 'any'}, {src: i512, sizes: '512x512', type: 'image/png', purpose: 'any'}]};
+    const link = document.createElement('link'); link.rel = 'manifest';
+    link.href = URL.createObjectURL(new Blob([JSON.stringify(manifest)], {type: 'application/manifest+json'}));
+    document.head.appendChild(link);
+    if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) navigator.serviceWorker.register('sw.js').catch(() => {});
+  } catch (e) {}
+})();
 
 function commit() { persist(); render(); }
 
 (async function init() {
   const raw = loadFromLocalStorage();
   if (raw) { try { state = migrate(JSON.parse(raw)); } catch(e) {} }
-  if (getApiUrl()) {
-    const cloudData = await loadFromCloud();
-    if (cloudData) state = migrate(cloudData);
-  } else {
-    setStatus('Not connected', false);
-    document.getElementById('setupBanner').style.display = 'block';
-  }
   render();
+  await startSync();
 })();
 </script>
 </body>
